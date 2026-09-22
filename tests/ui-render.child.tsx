@@ -18,6 +18,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type {
   AgentRecord,
+  AttemptRecord,
+  EventRecord,
   ProjectRecord,
   RunRecord,
   StageRecord,
@@ -26,17 +28,28 @@ import type {
 import { buildStagePlan, builtinTemplate } from "../src/core/templates.js";
 import type { Bootstrap } from "../src/ui/api.js";
 import { App } from "../src/ui/App.js";
+import { ActivityPanel } from "../src/ui/components/ActivityPanel.js";
 import { ApprovalPanel } from "../src/ui/components/ApprovalPanel.js";
 import { ClampedText, TabPanel, Tabs } from "../src/ui/components/Bits.js";
+import { InputRequest } from "../src/ui/components/DecisionSheet.js";
 import { Home } from "../src/ui/components/Home.js";
+import { OverviewPanel } from "../src/ui/components/OverviewPanel.js";
+import { ReviewPanel } from "../src/ui/components/ReviewPanel.js";
+import { RunProgress } from "../src/ui/components/RunProgress.js";
 import { RunRow } from "../src/ui/components/RunRow.js";
-import { StageRail } from "../src/ui/components/StageRail.js";
+import { VerificationPanel } from "../src/ui/components/VerificationPanel.js";
+import type { RunDetailResponse } from "../src/ui/api.js";
 import {
   approvalDecisionOptions,
   approvalEvidenceView,
-  buildStageRail,
+  pendingInputQuestion,
   reviewCycleView,
 } from "../src/ui/view-model.js";
+import {
+  buildRunMilestones,
+  decisionFacts,
+  runStateView,
+} from "../src/ui/run-view.js";
 
 const plan = buildStagePlan(builtinTemplate("implement-review")!);
 
@@ -326,65 +339,964 @@ check(
   },
 );
 
-check("the stage rail renders the review branch as a branch", () => {
+/* --------------------- run screen fixtures (pass 3) -------------------- */
+
+const reviewerAgent: AgentRecord = {
+  ...agent,
+  id: "agent-reviewer",
+  name: "Claude Opus 4.8",
+  roleHint: "reviewer",
+};
+
+/**
+ * One run's detail payload in the shape the real server persists: the
+ * verification record carries `counts: null` while the normalized test runs for
+ * the same attempt were parsed confidently, and the verdict omits its reviewer
+ * string (it resolves through the recorded attempt's agent).
+ */
+function detailFixture(): RunDetailResponse {
+  const runRecord = run(
+    "WAITING_APPROVAL",
+    "run-review",
+    "Exercise the rejection gate",
+    "2026-09-22T12:00:00.000Z",
+  );
   const stages: StageRecord[] = [
+    stage("plan", "COMPLETED", { attemptCount: 1 }),
     stage("implement", "COMPLETED", {
       attemptCount: 1,
-      summary: "implemented",
+      agentId: agent.id,
+      summary: "implemented the goal",
     }),
-    stage("verify", "COMPLETED"),
-    stage("review", "WAITING_APPROVAL", { cycle: 1, attemptCount: 2 }),
+    stage("verify", "COMPLETED", { attemptCount: 1, agentId: agent.id }),
+    stage("review", "WAITING_APPROVAL", {
+      cycle: 2,
+      attemptCount: 2,
+      agentId: reviewerAgent.id,
+    }),
     stage("review.fix", "COMPLETED", { cycle: 1, attemptCount: 1 }),
-    stage("review.retest", "RUNNING", { cycle: 1 }),
+    stage("review.retest", "COMPLETED", { cycle: 1, attemptCount: 1 }),
+    stage("final_verify", "COMPLETED", { attemptCount: 1, agentId: agent.id }),
   ];
-  const tasks: TaskRecord[] = [];
-  const rail = buildStageRail(plan, stages, tasks, [agent], "review");
-  const markup = renderToStaticMarkup(
-    StageRail({
-      rail,
-      selectedKey: "review",
-      onSelect: () => undefined,
-      runStatus: "WAITING_APPROVAL",
-    }) as never,
+  const tests = [
+    ...Array.from({ length: 7 }, (_, index) => ({
+      id: `test-verify-${index}`,
+      runId: runRecord.id,
+      taskId: null,
+      attemptId: "attempt-verify",
+      stageKey: "verify",
+      framework: "node:test",
+      status: "passed" as const,
+      passed: 7,
+      failed: 0,
+      skipped: 0,
+      total: 7,
+      parsedConfidently: true,
+      summary: "all fixture checks passed",
+      durationMs: 1200,
+      createdAt: `2026-09-22T10:0${index}:00.000Z`,
+    })),
+    ...Array.from({ length: 7 }, (_, index) => ({
+      id: `test-final-${index}`,
+      runId: runRecord.id,
+      taskId: null,
+      attemptId: "attempt-final",
+      stageKey: "final_verify",
+      framework: "node:test",
+      status: "passed" as const,
+      passed: 7,
+      failed: 0,
+      skipped: 0,
+      total: 7,
+      parsedConfidently: true,
+      summary: null,
+      durationMs: 900,
+      createdAt: `2026-09-22T12:0${index}:00.000Z`,
+    })),
+  ];
+  const attempts: AttemptRecord[] = [
+    {
+      id: "attempt-implement",
+      taskId: "task-implement",
+      runId: runRecord.id,
+      stageKey: "implement",
+      attemptNumber: 1,
+      reason: null,
+      previousAttemptId: null,
+      kind: "agent" as const,
+      status: "COMPLETED" as const,
+      agentId: agent.id,
+      adapterKind: "mock",
+      agentSessionId: null,
+      promptPacket: null,
+      promptText: "Implement the goal exactly as the plan describes.",
+      inputs: [],
+      resultStatus: "completed",
+      resultSummary: "implemented",
+      exitCode: 0,
+      usage: null,
+      usageKnown: false,
+      artifacts: [],
+      reviewVerdictId: null,
+      verification: null,
+      error: null,
+      createdAt: "2026-09-22T10:00:00.000Z",
+      startedAt: "2026-09-22T10:00:00.000Z",
+      endedAt: "2026-09-22T10:05:00.000Z",
+    },
+    {
+      id: "attempt-verify",
+      taskId: "task-verify",
+      runId: runRecord.id,
+      stageKey: "verify",
+      attemptNumber: 1,
+      reason: null,
+      previousAttemptId: null,
+      kind: "verification" as const,
+      status: "COMPLETED" as const,
+      agentId: null,
+      adapterKind: null,
+      agentSessionId: null,
+      promptPacket: null,
+      promptText: null,
+      inputs: [],
+      resultStatus: "completed",
+      resultSummary: null,
+      exitCode: null,
+      usage: null,
+      usageKnown: false,
+      artifacts: [],
+      reviewVerdictId: null,
+      verification: {
+        status: "passed" as const,
+        summary: "1 command exited 0",
+        reason: null,
+        mode: "commands",
+        commandCount: 1,
+        counts: null,
+      },
+      error: null,
+      createdAt: "2026-09-22T10:08:00.000Z",
+      startedAt: "2026-09-22T10:08:00.000Z",
+      endedAt: "2026-09-22T10:09:00.000Z",
+    },
+    {
+      id: "attempt-review",
+      taskId: "task-review",
+      runId: runRecord.id,
+      stageKey: "review",
+      attemptNumber: 2,
+      reason: "reviewer requested changes",
+      previousAttemptId: "attempt-review-1",
+      kind: "agent" as const,
+      status: "COMPLETED" as const,
+      agentId: reviewerAgent.id,
+      adapterKind: "mock",
+      agentSessionId: null,
+      promptPacket: null,
+      promptText: "Review the frozen change.",
+      inputs: [],
+      resultStatus: "completed",
+      resultSummary: null,
+      exitCode: 0,
+      usage: null,
+      usageKnown: false,
+      artifacts: [],
+      reviewVerdictId: "rev-2",
+      verification: null,
+      error: null,
+      createdAt: "2026-09-22T11:00:00.000Z",
+      startedAt: "2026-09-22T11:00:00.000Z",
+      endedAt: "2026-09-22T11:02:00.000Z",
+    },
+    {
+      id: "attempt-final",
+      taskId: "task-final-verify",
+      runId: runRecord.id,
+      stageKey: "final_verify",
+      attemptNumber: 1,
+      reason: null,
+      previousAttemptId: null,
+      kind: "verification" as const,
+      status: "COMPLETED" as const,
+      agentId: null,
+      adapterKind: null,
+      agentSessionId: null,
+      promptPacket: null,
+      promptText: null,
+      inputs: [],
+      resultStatus: "completed",
+      resultSummary: null,
+      exitCode: null,
+      usage: null,
+      usageKnown: false,
+      artifacts: [],
+      reviewVerdictId: null,
+      verification: {
+        status: "passed" as const,
+        summary: "1 command exited 0",
+        reason: null,
+        mode: "commands",
+        commandCount: 1,
+        counts: null,
+      },
+      error: null,
+      createdAt: "2026-09-22T12:03:00.000Z",
+      startedAt: "2026-09-22T12:03:00.000Z",
+      endedAt: "2026-09-22T12:04:00.000Z",
+    },
+  ];
+  return {
+    run: runRecord,
+    plan,
+    stages,
+    tasks: [],
+    attempts,
+    tests,
+    approvals: [],
+    pendingApproval: {
+      id: "approval-final",
+      runId: runRecord.id,
+      stageKey: "final",
+      taskId: null,
+      attemptId: null,
+      gate: "final_acceptance",
+      status: "PENDING",
+      allowed: ["approve", "reject"],
+      reason: null,
+      requestedAt: "2026-09-22T12:05:00.000Z",
+      decision: null,
+      instruction: null,
+      actor: null,
+      decidedAt: null,
+    },
+    reviewVerdicts: [
+      {
+        id: "rev-1",
+        runId: runRecord.id,
+        taskId: "task-review",
+        attemptId: "attempt-review-1",
+        stageKey: "review",
+        cycle: 1,
+        valid: true,
+        validationErrors: [],
+        verdict: "REJECT",
+        summary: "the parser drops empty input",
+        issues: [
+          {
+            severity: "blocking",
+            description: "empty input throws",
+            path: "src/parser.ts",
+            line: 42,
+          },
+        ],
+        confidence: null,
+        reviewer: null,
+        raw: '{"verdict":"REJECT"}',
+        createdAt: "2026-09-22T10:30:00.000Z",
+      },
+      {
+        id: "rev-2",
+        runId: runRecord.id,
+        taskId: "task-review",
+        attemptId: "attempt-review",
+        stageKey: "review",
+        cycle: 2,
+        valid: true,
+        validationErrors: [],
+        verdict: "APPROVE",
+        summary: "the fix is correct and the change is small",
+        issues: [
+          {
+            severity: "nit",
+            description: "naming could be clearer",
+            path: "src/parser.ts",
+            line: 12,
+          },
+          {
+            severity: "nit",
+            description: "add a comment for the fallback",
+            path: null,
+            line: null,
+          },
+        ],
+        confidence: null,
+        reviewer: null,
+        raw: '{"verdict":"APPROVE"}',
+        createdAt: "2026-09-22T11:02:00.000Z",
+      },
+    ],
+    events: [
+      {
+        id: 1,
+        projectId: project.id,
+        runId: runRecord.id,
+        taskId: null,
+        attemptId: "attempt-implement",
+        stageKey: "implement",
+        category: "stage",
+        type: "stage.started",
+        actor: "engine",
+        payload: { agentId: agent.id },
+        createdAt: "2026-09-22T10:00:00.000Z",
+      },
+      {
+        id: 2,
+        projectId: project.id,
+        runId: runRecord.id,
+        taskId: null,
+        attemptId: "attempt-implement",
+        stageKey: "implement",
+        category: "agent",
+        type: "agent.output",
+        actor: "agent",
+        payload: { stream: "stdout", message: "raw protocol frame" },
+        createdAt: "2026-09-22T10:00:30.000Z",
+      },
+      {
+        id: 3,
+        projectId: project.id,
+        runId: runRecord.id,
+        taskId: null,
+        attemptId: "attempt-implement",
+        stageKey: "implement",
+        category: "agent",
+        type: "agent.failed",
+        actor: "agent",
+        payload: { agentId: agent.id, message: "adapter exited 1" },
+        createdAt: "2026-09-22T10:01:00.000Z",
+      },
+      {
+        id: 4,
+        projectId: project.id,
+        runId: runRecord.id,
+        taskId: null,
+        attemptId: null,
+        stageKey: null,
+        category: "system",
+        type: "HEARTBEAT",
+        actor: "system",
+        payload: { message: "still alive" },
+        createdAt: "2026-09-22T10:02:00.000Z",
+      },
+    ],
+    snapshots: [
+      {
+        id: "snapshot-1",
+        runId: runRecord.id,
+        stageKey: "implement",
+        attemptId: "attempt-implement",
+        phase: "after",
+        headSha: "0123456789abcdef",
+        branch: "main",
+        detached: false,
+        dirty: true,
+        stagedPaths: [],
+        unstagedPaths: ["src/parser.ts"],
+        untrackedPaths: [],
+        diffStat: " 1 file changed, 3 insertions(+), 1 deletion(-)",
+        localCommits: [],
+        ahead: null,
+        behind: null,
+        unavailableReason: null,
+        capturedAt: "2026-09-22T10:05:00.000Z",
+      },
+    ],
+    commands: [
+      {
+        id: "command-final",
+        runId: runRecord.id,
+        taskId: null,
+        attemptId: "attempt-final",
+        stageKey: "final_verify",
+        testRunId: null,
+        name: "test",
+        executable: "npm",
+        args: ["test"],
+        cwd: null,
+        status: "passed" as const,
+        exitCode: 0,
+        durationMs: 900,
+        stdoutExcerpt: "# pass 7\n# fail 0\n# tests 7",
+        stderrExcerpt: null,
+        truncated: false,
+        createdAt: "2026-09-22T12:03:00.000Z",
+      },
+    ],
+    artifacts: [
+      {
+        id: "artifact-1",
+        runId: runRecord.id,
+        stageKey: "implement",
+        taskId: null,
+        attemptId: null,
+        path: "reports/run-summary.md",
+        kind: "report",
+        sizeBytes: 2048,
+        exists: true,
+        creator: "operator",
+        note: null,
+        createdAt: "2026-09-22T10:06:00.000Z",
+      },
+    ],
+    project,
+    agents: [agent, reviewerAgent],
+  };
+}
+
+const detail = detailFixture();
+
+/**
+ * The Activity context the run page builds: an agent event names its agent
+ * through the attempt it belongs to, so the sentences never fall back to a
+ * generic "Agent" when the run recorded a real one.
+ */
+function activityContextFor(source: RunDetailResponse) {
+  return {
+    stageNames: new Map(source.stages.map((stage) => [stage.key, stage.name])),
+    attemptNumbers: new Map(
+      source.attempts.map((attempt) => [attempt.id, attempt.attemptNumber]),
+    ),
+    agentNames: new Map(source.agents.map((agent) => [agent.id, agent.name])),
+    attemptAgents: new Map(
+      source.attempts.flatMap((attempt) => {
+        const name = source.agents.find(
+          (agent) => agent.id === attempt.agentId,
+        )?.name;
+        return name ? [[attempt.id, name] as const] : [];
+      }),
+    ),
+  };
+}
+
+/* --------------------------- run screen checks -------------------------- */
+
+check("stage progress is compact and its chronology is folded", () => {
+  const milestones = buildRunMilestones(
+    detail.plan,
+    detail.stages,
+    detail.agents,
+    "final",
   );
-  assert.match(markup, /Stage rail/);
-  assert.match(markup, /Structured review/);
-  assert.match(markup, /Structured review: fixes/);
-  assert.match(markup, /Structured review: re-verification/);
-  assert.match(markup, /fixes from review cycle 1 of 2 · active/);
-  assert.match(markup, /Waiting for you/);
-  assert.match(markup, /2\/6 non-conditional stages completed/);
-  assert.match(
-    markup,
-    /This branch ran: a verdict asked for fixes, then re-verification/,
+  const markup = renderToStaticMarkup(
+    createElement(RunProgress, {
+      milestones,
+      selectedStageKey: "review",
+      onSelectStage: () => undefined,
+      onOpenMilestone: () => undefined,
+    }),
+  );
+  const bar = markup.slice(0, markup.indexOf("<details"));
+  // Plain names, in plan order, one button each with an icon and a state word.
+  for (const name of ["Plan", "Build", "Verify", "Review", "Final"]) {
+    assert.match(bar, new RegExp(`progress__name">${name}<`));
+  }
+  assert.equal((bar.match(/class="progress__button /g) ?? []).length, 5);
+  assert.match(bar, /progress__icon--complete"[^>]*>✓</);
+  assert.match(bar, /progress__icon--current"[^>]*>●</);
+  assert.ok(
+    !/progress__meta|attempts</.test(bar),
+    "the progression itself carries no attempt counts or record rows",
   );
   assert.ok(
-    !/Fixture agent/.test(markup),
-    "a review stage with no agent shows no agent name",
+    !/<details/.test(bar),
+    "no milestone is expanded by default",
+  );
+  assert.ok(
+    !/>[^<]*WAITING_APPROVAL[^<]*</.test(markup),
+    "no persisted enum is rendered as visible text",
+  );
+  // The chronology — including the review → fix → re-verification branch — is
+  // reachable, collapsed, with the cycle it belongs to.
+  assert.match(markup, /Workflow details/);
+  assert.match(markup, /Structured review: fixes/);
+  assert.match(markup, /Structured review: re-verification/);
+  assert.match(markup, /fixes from review cycle 1 of 2/);
+  assert.match(
+    markup,
+    /aria-label="Structured review review reviewer Claude Opus 4\.8 Waiting for you"/,
+  );
+  assert.ok(
+    !/>cycle 1</.test(markup),
+    "no bare cycle counter competing with the run-level one",
+  );
+  assert.ok(
+    !/<details class="disclosure" open/.test(markup),
+    "workflow details start collapsed",
   );
 });
 
-check("a dormant review branch says so instead of inventing a cycle", () => {
-  const dormant = renderToStaticMarkup(
-    StageRail({
-      rail: buildStageRail(
-        plan,
-        [stage("implement", "RUNNING")],
-        [],
-        [agent],
-        "implement",
-      ),
-      selectedKey: "implement",
-      onSelect: () => undefined,
-      runStatus: "RUNNING",
-    }) as never,
+check("the run state headline is the semantic sentence, not the enum", () => {
+  assert.equal(
+    runStateView({
+      status: "WAITING_APPROVAL",
+      gate: "final_acceptance",
+      stage: detail.stages.find((entry) => entry.key === "final") ?? null,
+    }).headline,
+    "Ready for your review",
   );
-  assert.match(dormant, /dormant/);
-  assert.match(
-    dormant,
-    /only a review verdict of APPROVE_WITH_FIXES activates this branch/,
+  assert.equal(
+    runStateView({
+      status: "RUNNING",
+      stage: detail.stages.find((entry) => entry.key === "implement") ?? null,
+      agentName: agent.name,
+    }).headline,
+    "Fixture agent is implementing",
   );
-  assert.match(dormant, /0\/6 non-conditional stages completed/);
+  assert.equal(
+    runStateView({
+      status: "FAILED",
+      failedStageName: "Implementation",
+    }).headline,
+    "Implementation failed",
+  );
+  assert.equal(
+    runStateView({ status: "COMPLETED" }).headline,
+    "Completed",
+  );
+});
+
+check("activity lists lifecycle sentences, not output frames", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ActivityPanel, {
+      events: detail.events,
+      streamStatus: "live",
+      stages: detail.stages,
+      tasks: detail.tasks,
+      agents: detail.agents,
+      attempts: detail.attempts.map((entry) => ({
+        id: entry.id,
+        attemptNumber: entry.attemptNumber,
+        stageKey: entry.stageKey,
+        agentId: entry.agentId,
+      })),
+    }),
+  );
+  // Operator sentences, newest first, with a time and no category/type column.
+  assert.match(markup, /aria-label="Run activity"/);
+  assert.match(markup, /Newest first/);
+  const failedAt = markup.indexOf("Fixture agent failed on Implementation");
+  const startedAt = markup.indexOf("Fixture agent started Implementation");
+  assert.ok(
+    failedAt >= 0 && startedAt > failedAt,
+    "the newest event is listed first",
+  );
+  // The activity list itself carries no protocol frame text.
+  const list = markup.slice(
+    markup.indexOf('aria-label="Run activity"'),
+    markup.indexOf("</ol>"),
+  );
+  assert.ok(!/raw protocol frame/.test(list), "output frames stay out of Activity");
+  assert.ok(!/agent\.output/.test(list), "no event type column in Activity");
+  assert.match(markup, /Problems only/);
+  // The raw log stream keeps every frame, with its own filters and follow.
+  assert.match(markup, /Raw logs \(4 lines, 2 output frames\)/);
+  assert.match(markup, /aria-label="Filter by stream"/);
+  assert.match(markup, /aria-label="Filter by severity"/);
+  assert.match(markup, />Following</);
+  assert.match(markup, /Advanced filters/);
+  assert.match(markup, /aria-label="Filter by actor"/);
+  assert.ok(!/Jump to latest/.test(markup), "nothing is paused yet");
+});
+
+check("verification leads with command rows and folds the raw output", () => {
+  const markup = renderToStaticMarkup(createElement(VerificationPanel, { detail }));
+  const latestAt = markup.indexOf("Latest verification");
+  assert.ok(latestAt === -1, "no record-inspector heading");
+  assert.match(markup, /Final verification/);
+  assert.match(markup, /Verified /);
+  // One row per command: what ran, its status word, its counts, its duration.
+  assert.match(markup, /npm test/);
+  assert.match(markup, /Passed/);
+  assert.match(markup, /7 passed \/ 0 failed \/ 7 total/);
+  assert.match(markup, /900 ms/);
+  // The parsed test count is stated exactly once in the default body — on the
+  // command row. There is no second summary line repeating it, and the
+  // normalized test rows themselves sit under Technical details.
+  const defaultBody = markup.slice(0, markup.indexOf("Technical details"));
+  assert.equal(
+    (defaultBody.match(/7 passed \/ 0 failed \/ 7 total/g) ?? []).length,
+    1,
+    "the normalized count is presented once, on the command row",
+  );
+  assert.ok(
+    !/7 tests passed/.test(defaultBody),
+    "no second test-count summary line in the default body",
+  );
+  assert.ok(
+    !/1 command exited 0/.test(defaultBody),
+    "the recorded summary is not repeated in the default body",
+  );
+  // The two seven-test attempts are never added up into fourteen.
+  assert.ok(!/14 tests/.test(markup), "counts are not summed across attempts");
+  assert.ok(!/14\/14/.test(markup));
+  // Raw output exists and is folded.
+  assert.match(markup, /Raw output/);
+  assert.match(markup, /# pass 7/);
+  assert.ok(
+    !/<details class="disclosure" open/.test(markup),
+    "raw output stays folded",
+  );
+  // Database-level facts live under Technical details, not in the default body.
+  assert.match(markup, /Technical details/);
+  assert.match(markup, /Count source/);
+  assert.match(markup, /Recorded summary/);
+  assert.match(markup, /Earlier verifications/);
+  // The earlier verification is headed by the attempt and its persisted
+  // outcome; its parsed count is not repeated a second time there either.
+  const earlier = markup.slice(markup.indexOf("Earlier verifications"));
+  assert.match(earlier, /Verification · Passed · /);
+  assert.ok(
+    !/Verification · 7 tests passed/.test(earlier),
+    "no parsed test count in the earlier verification heading",
+  );
+});
+
+check("a passed command with unparsed counts still reads as passed", () => {
+  const unparsed: RunDetailResponse = {
+    ...detail,
+    tests: detail.tests.map((test) =>
+      test.attemptId === "attempt-final"
+        ? { ...test, passed: null, failed: null, skipped: null, total: null, parsedConfidently: false, status: "unknown" as const, summary: "command output could not be counted" }
+        : test,
+    ),
+  };
+  const markup = renderToStaticMarkup(
+    createElement(VerificationPanel, { detail: unparsed }),
+  );
+  // The command still shows its real status and duration…
+  assert.match(markup, /npm test/);
+  assert.match(markup, /Passed/);
+  // …while the count it could not parse is stated as unavailable, never as 0.
+  assert.match(markup, /Test count unavailable/);
+  assert.ok(!/0 passed/.test(markup), "an unknown count is never written as zero");
+  // The recorded summary is kept — under Technical details, not as a second
+  // summary line in front of the operator.
+  assert.match(markup.slice(markup.indexOf("Technical details")), /1 command exited 0/);
+  assert.ok(
+    !/1 command exited 0/.test(markup.slice(0, markup.indexOf("Technical details"))),
+    "the recorded summary is not repeated in the default body",
+  );
+});
+
+check("a multi-command verification never stamps one count on every command", () => {
+  // Mixed verification: a test command that prints counts and a build command
+  // that prints none. The single attempt-level count must not be attributed to
+  // the build command.
+  const mixed: RunDetailResponse = {
+    ...detail,
+    commands: [
+      { ...detail.commands[0]!, id: "command-test", name: "test", executable: "npm", args: ["test"] },
+      {
+        ...detail.commands[0]!,
+        id: "command-build",
+        name: "build",
+        executable: "npm",
+        args: ["run", "build"],
+        stdoutExcerpt: "vite build done in 182ms",
+        durationMs: 182,
+      },
+    ],
+  };
+  const markup = renderToStaticMarkup(
+    createElement(VerificationPanel, { detail: mixed }),
+  );
+  const buildAt = markup.indexOf("npm run build");
+  assert.ok(buildAt >= 0, "the build command is listed");
+  const buildRow = markup.slice(buildAt, markup.indexOf("</div></div>", buildAt));
+  assert.ok(
+    !/7 tests passed|7 passed/.test(buildRow),
+    "the test counts are not attributed to the build command",
+  );
+  assert.match(buildRow, /182 ms/);
+  // The counts appear once, at verification level, with the limitation stated.
+  assert.match(markup, /for this verification as a whole/);
+  const testAt = markup.indexOf("npm test");
+  const testRow = markup.slice(testAt, buildAt);
+  assert.ok(
+    !/7 tests passed|7 passed/.test(testRow),
+    "no per-command counts when the attempt has several commands",
+  );
+});
+
+check("review leads with reviewer and findings, prose one level down", () => {
+  const markup = renderToStaticMarkup(createElement(ReviewPanel, { detail }));
+  assert.match(markup, /Review verdicts/);
+  // Reviewer, verdict and finding counts come first.
+  assert.match(markup, /Claude Opus 4\.8/);
+  assert.match(markup, /Approve/);
+  assert.match(markup, /0 blockers · 2 suggestions/);
+  assert.match(markup, /Suggestions \(2\)/);
+  assert.match(markup, /naming could be clearer/);
+  assert.match(markup, /src\/parser\.ts:12/);
+  assert.match(markup, /add a comment for the fallback/);
+  // The prose sits behind Read full review, not in front of the findings.
+  const findingsAt = markup.indexOf("Suggestions (2)");
+  const proseAt = markup.indexOf("the fix is correct and the change is small");
+  assert.ok(findingsAt >= 0 && proseAt > findingsAt, "findings precede the prose");
+  assert.match(markup, /Read full review/);
+  // Provenance and the raw payload are folded under Technical details.
+  assert.match(markup, /Technical details/);
+  assert.match(markup, /resolved through the verdict/);
+  assert.match(markup, /Raw review payload \(JSON\)/);
+  assert.match(markup, /reviewed severity: nit/);
+  assert.ok(!/>APPROVE</.test(markup), "no persisted verdict enum as copy");
+  assert.ok(
+    !/<details class="disclosure" open/.test(markup),
+    "nothing opens by default",
+  );
+  // Every earlier verdict is kept as a chronology.
+  assert.match(markup, /Earlier reviews \(1\)/);
+  assert.match(markup, /Reject/);
+  assert.match(markup, /empty input throws/);
+  assert.match(markup, /Blockers \(1\)/);
+  assert.match(markup, /src\/parser\.ts:42/);
+});
+
+check("overview keeps the outcome, the audit and the run's assets", () => {
+  const markup = renderToStaticMarkup(
+    createElement(OverviewPanel, {
+      client: {} as never,
+      detail,
+      events: detail.events,
+      activityContext: activityContextFor(detail),
+      activeSummary: "reviewing the frozen change",
+      showOutcome: true,
+      selectedStage:
+        detail.stages.find((entry) => entry.key === "implement") ?? null,
+      selectedStageKey: "implement",
+      selectedAttemptId: null,
+      onSelectAttempt: () => undefined,
+      onSelectStage: () => undefined,
+      onOpenTab: () => undefined,
+      evidenceOpen: false,
+      onEvidenceOpen: () => undefined,
+      refreshDetail: () => undefined,
+    }),
+  );
+  assert.match(markup, /Outcome/);
+  assert.match(markup, /Now/);
+  assert.match(markup, /Recent activity/);
+  // Recent activity leads; the outcome follows it, then the assets.
+  const activityAt = markup.indexOf("Recent activity");
+  const outcomeAt = markup.indexOf(">Outcome<");
+  const assetsAt = markup.indexOf("Artifacts and usage");
+  assert.ok(
+    activityAt >= 0 && outcomeAt > activityAt && assetsAt > outcomeAt,
+    "recent activity leads the overview, ahead of the outcome and the assets",
+  );
+  // Three short outcome lines; no record table, no repeated goal, no counters.
+  assert.match(markup, /Passed · 7 tests passed \(Final verification\)/);
+  assert.match(markup, /Claude Opus 4\.8 approved · 0 blockers, 2 suggestions/);
+  assert.match(markup, /1 file changed/);
+  assert.ok(
+    !/Fix cycles used|Attempts<\/dt>|Goal<\/dt>/.test(
+      markup.slice(0, markup.indexOf("Stage evidence")),
+    ),
+    "the Overview default is not a record table",
+  );
+  assert.ok(!/14 tests/.test(markup));
+  // The live state stays in the header: the Overview adds the run's own summary
+  // of the work in flight, never the sentence the header already states.
+  assert.match(markup, /reviewing the frozen change/);
+  assert.ok(
+    !/Fixture agent is reviewing/.test(markup),
+    "the active work sentence is not repeated under the header",
+  );
+  // Recent activity is lifecycle sentences, not frames, newest first, with no
+  // implementation explainer.
+  assert.match(markup, /Fixture agent started Implementation/);
+  assert.ok(!/raw protocol frame/.test(markup), "no frames in the summary");
+  assert.ok(
+    !/lifecycle messages|Raw logs live in/.test(markup),
+    "no implementation explainer under recent activity",
+  );
+  // Run-level artifacts and measured usage are still here: an artifact with no
+  // attempt at all is listed, and the operator can register another.
+  assert.match(markup, /Artifacts and usage/);
+  assert.match(markup, /Artifacts \(1\)/);
+  assert.match(markup, /reports\/run-summary\.md/);
+  assert.match(markup, /Register an artifact/);
+  assert.match(markup, /Repository-relative path/);
+  assert.match(markup, /Register artifact/);
+  assert.match(markup, /Measured usage/);
+  // The stage audit is reachable in one disclosure, closed by default.
+  assert.match(markup, /Stage evidence — Implementation/);
+  assert.match(markup, /Open evidence for Implementation/);
+  assert.match(markup, /Exact prompt persisted for attempt #1/);
+  assert.ok(
+    !/run-review/.test(markup),
+    "ids stay under the page's Technical details, not in the Overview",
+  );
+});
+
+check("overview never invents evidence it does not have", () => {
+  const bare = {
+    ...detail,
+    tests: [],
+    commands: [],
+    reviewVerdicts: [],
+    verification: [],
+    snapshots: [],
+    attempts: detail.attempts.map((attempt) => ({
+      ...attempt,
+      verification: null,
+    })),
+  };
+  const markup = renderToStaticMarkup(
+    createElement(OverviewPanel, {
+      client: {} as never,
+      detail: bare as never,
+      events: [],
+      activityContext: {
+        stageNames: new Map(),
+        attemptNumbers: new Map(),
+        agentNames: new Map(),
+      },
+      activeSummary: null,
+      // The outcome block still exists — it is simply reserved for a finished
+      // run — and it refuses to claim evidence the run never recorded.
+      showOutcome: true,
+      selectedStage: null,
+      selectedStageKey: null,
+      selectedAttemptId: null,
+      onSelectAttempt: () => undefined,
+      onSelectStage: () => undefined,
+      onOpenTab: () => undefined,
+      evidenceOpen: false,
+      onEvidenceOpen: () => undefined,
+      refreshDetail: () => undefined,
+    }),
+  );
+  assert.match(markup, /Nothing has finished on this run yet/);
+  assert.ok(
+    !/tests passed|approved|rejected|Verification:/i.test(markup),
+    "no pass or verdict is claimed without evidence",
+  );
+});
+
+check(
+  "overview leads with recent activity and leaves the live state to the header",
+  () => {
+    // A run that is still working, with the decision sheet owning the gate: the
+    // Overview adds only the summary the run itself recorded, and names agents
+    // through the attempt an event belongs to.
+    const events: EventRecord[] = [
+      {
+        id: 11,
+        projectId: project.id,
+        runId: "run-review",
+        taskId: null,
+        attemptId: "attempt-review",
+        stageKey: "review",
+        category: "agent",
+        type: "agent.started",
+        actor: "agent",
+        // No agent id in the payload: the attempt names the agent.
+        payload: {},
+        createdAt: "2026-09-22T11:00:00.000Z",
+      },
+      {
+        id: 12,
+        projectId: project.id,
+        runId: "run-review",
+        taskId: null,
+        attemptId: null,
+        stageKey: "final",
+        category: "approval",
+        type: "approval.requested",
+        actor: "engine",
+        payload: {},
+        createdAt: "2026-09-22T12:05:00.000Z",
+      },
+    ];
+    const markup = renderToStaticMarkup(
+      createElement(OverviewPanel, {
+        client: {} as never,
+        detail,
+        events,
+        activityContext: activityContextFor(detail),
+        activeSummary: "rewriting the greeting guard",
+        // Active run: the header states the work, the sheet states the gate.
+        showOutcome: false,
+        selectedStage: null,
+        selectedStageKey: null,
+        selectedAttemptId: null,
+        onSelectAttempt: () => undefined,
+        onSelectStage: () => undefined,
+        onOpenTab: () => undefined,
+        evidenceOpen: false,
+        onEvidenceOpen: () => undefined,
+        refreshDetail: () => undefined,
+      }),
+    );
+    // Recent activity is the first section, and the outcome block is absent.
+    assert.ok(
+      markup.indexOf("Recent activity") < markup.indexOf("Artifacts and usage"),
+      "recent activity leads the overview",
+    );
+    assert.ok(
+      !/>Outcome</.test(markup),
+      "no outcome block while the header and the sheet state the facts",
+    );
+    // Only the run's own summary of the work in flight.
+    assert.match(markup, /rewriting the greeting guard/);
+    assert.ok(!/Fixture agent is reviewing/.test(markup));
+    // The agent is named through the attempt, never as a generic "Agent".
+    assert.match(markup, /Claude Opus 4\.8 started Structured review/);
+    assert.ok(!/>Agent started/.test(markup));
+    // Newest first: the 12:05 approval request precedes the 11:00 start.
+    const waitingAt = markup.indexOf("Waiting for your decision");
+    const startedAt = markup.indexOf("Claude Opus 4.8 started Structured review");
+    assert.ok(
+      waitingAt >= 0 && startedAt > waitingAt,
+      "the newest activity is listed first",
+    );
+  },
+);
+
+check("the operator input gate asks the question next to the answer", () => {
+  const question = pendingInputQuestion({
+    events: [
+      {
+        id: 9,
+        projectId: project.id,
+        runId: "run-review",
+        taskId: null,
+        attemptId: "attempt-implement",
+        stageKey: "implement",
+        category: "agent",
+        type: "agent.waiting",
+        actor: "agent",
+        payload: { message: "Which fixture should I use for the retry test?" },
+        createdAt: "2026-09-22T12:06:00.000Z",
+      },
+    ],
+    attempts: [
+      { ...detail.attempts[0]!, status: "WAITING_INPUT" },
+    ],
+  });
+  const markup = renderToStaticMarkup(
+    createElement(InputRequest, {
+      question,
+      stageName: "Implementation",
+      value: "",
+      onChange: () => undefined,
+      onSubmit: () => undefined,
+      busy: false,
+    }),
+  );
+  // Question, plain context, then the answer field.
+  assert.match(markup, /Which fixture should I use for the retry test\?/);
+  assert.match(markup, /Implementation · attempt 1/);
+  assert.match(markup, /Your answer/);
+  assert.ok(
+    !/agent\.waiting|Source:|persisted/.test(markup.split("Technical details")[0]!),
+    "provenance stays out of the default question block",
+  );
+  assert.match(markup, /Technical details/);
+  assert.match(markup, /Question source/);
+  assert.match(markup, />Send input</);
 });
 
 check("the app shell renders its navigation and loading state", () => {
@@ -584,6 +1496,7 @@ check(
       ApprovalPanel({
         evidence,
         options,
+        facts: decisionFacts({ evidence, snapshots: [] }),
         selected: null,
         reason: "",
         busy: false,
@@ -591,6 +1504,7 @@ check(
         onReasonChange: () => undefined,
         onCancel: () => undefined,
         onConfirm: () => undefined,
+        onOpenReview: () => undefined,
       }) as never,
     );
     // The evidence is rendered before any decision button.
@@ -604,25 +1518,26 @@ check(
     assert.match(idle, /Review rejected — human decision required/);
     assert.match(idle, /review cycle 2 of 2/);
     assert.match(idle, /Claude Opus 4\.8/);
-    assert.match(idle, /empty input throws/);
-    assert.match(idle, /src\/parser\.ts:42/);
-    // Real payload shape: the verdict omits `reviewer`, the counts are null in
-    // the verification record but confident in the normalized test run.
-    assert.match(idle, /Claude Opus 4\.8/);
+    // The reviewer's findings live in the Review tab; the sheet keeps the
+    // summary-level facts and offers a secondary control to read the full review.
     assert.match(idle, /resolved through the verdict/);
+    assert.match(idle, /Findings<\/dt><dd>1 blocker/);
     assert.match(idle, /Command passed · 7\/7 passed/);
     assert.match(idle, /counts from the normalized test run node:test/);
-    // The default view of the evidence is short: reviewer + verdict and the
-    // latest verification, in front of the controls, with the full payload one
-    // level down in disclosures (nothing is hidden or deleted).
+    // The sheet shows one compact summary line and summary-level facts, with
+    // every provenance detail inside the single collapsed disclosure.
     const summaryAt = idle.indexOf("Claude Opus 4.8 rejected");
-    assert.ok(summaryAt >= 0, "the concise evidence summary is rendered");
+    assert.ok(summaryAt >= 0, "the concise decision summary is rendered");
     assert.ok(
       summaryAt < firstButtonAt,
-      `the evidence summary (${summaryAt}) must precede the decision buttons (${firstButtonAt})`,
+      `the summary (${summaryAt}) must precede the decision buttons (${firstButtonAt})`,
     );
     assert.match(idle, /1 blocker/);
-    assert.match(idle, /Verification: 7 tests passed/);
+    assert.match(
+      idle,
+      /class="evidence-fact[^"]*">7 tests passed</,
+      "the verification count appears once, as a fact",
+    );
     // The page's primary state is the semantic sentence, not the run status
     // word and not the raw gate key.
     assert.match(idle, /Review rejected — your call/);
@@ -630,12 +1545,16 @@ check(
       !/final_acceptance|final_verify/.test(idle),
       "no raw gate or stage keys in the evidence block",
     );
-    assert.match(idle, /Read full review/);
     assert.match(idle, /Technical details/);
     assert.equal(
       (idle.match(/<details class="disclosure">/g) ?? []).length,
-      3,
-      "review prose, provenance and decision help are all disclosures",
+      1,
+      "one collapsed disclosure holds provenance, facts and decision help",
+    );
+    assert.match(
+      idle,
+      />Read full review</,
+      "the sheet offers a secondary control that opens the Review tab",
     );
     assert.match(idle, /Override rejection and continue/);
     assert.ok(
@@ -707,6 +1626,7 @@ check("the final acceptance gate offers Accept run", () => {
     ApprovalPanel({
       evidence,
       options,
+      facts: decisionFacts({ evidence, snapshots: [] }),
       selected: null,
       reason: "",
       busy: false,
@@ -716,11 +1636,25 @@ check("the final acceptance gate offers Accept run", () => {
       onConfirm: () => undefined,
     }) as never,
   );
-  assert.match(markup, />Accept run</);
   assert.ok(!/>Approve</.test(markup), "no generic Approve at the final gate");
+  assert.match(markup, />Accept run</);
   assert.match(markup, /No review verdict is recorded for this stage/);
   assert.match(markup, /No verification outcome is recorded/);
   assert.match(markup, />Reject</);
+  // The sheet is compact: summary line, summary-level facts, one disclosure.
+  assert.match(markup, /Ready to finish/);
+  assert.match(markup, /No review verdict recorded/);
+  assert.match(markup, /No verification outcome recorded/);
+  assert.match(markup, /Changed files UNKNOWN/);
+  assert.equal(
+    (markup.match(/<details class="disclosure">/g) ?? []).length,
+    1,
+    "one collapsed technical disclosure, nothing else",
+  );
+  assert.ok(
+    !/Read full review/.test(markup),
+    "no full-review control without a verdict to read",
+  );
   // Accepting takes no reason, so it never reveals the reason textarea.
   assert.ok(!/id="approval-reason"/.test(markup));
 });

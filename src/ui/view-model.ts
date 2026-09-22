@@ -437,150 +437,6 @@ export function mergeEvents(
   return merged.length > cap ? merged.slice(merged.length - cap) : merged;
 }
 
-/* ------------------------------------------------------------------ */
-/* Stage rail (branched review -> fix -> retest loop)                  */
-/* ------------------------------------------------------------------ */
-
-export interface RailNode {
-  key: string;
-  name: string;
-  kind: StagePlanEntry["kind"];
-  role: string;
-  orderIndex: number;
-  status: string;
-  cycle: number;
-  attemptCount: number;
-  agentName: string | null;
-  summary: string | null;
-  failureReason: string | null;
-  isCurrent: boolean;
-  isLoop: boolean;
-  loopPhase: "fix" | "retest" | null;
-  skippedReason: string | null;
-  overridden: boolean;
-}
-
-export interface RailLoop {
-  reviewStageKey: string;
-  reviewName: string;
-  /** Loop nodes, in plan order (fix, retest). Dormant until a verdict asks for fixes. */
-  nodes: RailNode[];
-  /** `true` once any loop node has run, i.e. the branch actually exists for this run. */
-  activated: boolean;
-  maxReviewCycles: number;
-  cycle: number;
-}
-
-export interface StageRail {
-  spine: RailNode[];
-  loops: RailLoop[];
-  currentKey: string | null;
-  progress: { completed: number; total: number };
-}
-
-function stageLookup(stages: readonly StageRecord[]): Map<string, StageRecord> {
-  const map = new Map<string, StageRecord>();
-  for (const stage of stages) map.set(stage.key, stage);
-  return map;
-}
-
-/** Tasks carry a free-form plan object; only a numeric `cycle` is trusted. */
-function taskCycle(task: TaskRecord | undefined): number {
-  const value = task?.plan["cycle"];
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-/**
- * Builds the rail the run view renders.
- *
- * The spine is the plan order minus loop stages. Loop stages (`<review>.fix`,
- * `<review>.retest`) are attached to their review stage as a branch, which is
- * what makes the review -> fix -> retest -> review cycle visible instead of
- * pretending the plan is linear.
- */
-export function buildStageRail(
-  plan: StagePlan,
-  stages: readonly StageRecord[],
-  tasks: readonly TaskRecord[],
-  agents: readonly AgentRecord[],
-  currentStageKey: string | null = null,
-): StageRail {
-  const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]));
-  const byKey = stageLookup(stages);
-  const taskByStage = new Map(tasks.map((task) => [task.stageKey, task]));
-  const ordered = [...plan.stages].sort((a, b) => a.orderIndex - b.orderIndex);
-
-  const toNode = (entry: StagePlanEntry, isLoop: boolean): RailNode => {
-    const stage = byKey.get(entry.key);
-    const task = taskByStage.get(entry.key);
-    const agentId = stage?.agentId ?? task?.agentId ?? null;
-    return {
-      key: entry.key,
-      name: stage?.name ?? entry.name,
-      kind: entry.kind,
-      role: stage?.role ?? entry.role,
-      orderIndex: entry.orderIndex,
-      status: stage?.status ?? "PENDING",
-      cycle: stage?.cycle ?? taskCycle(task),
-      attemptCount: stage?.attemptCount ?? task?.attemptCount ?? 0,
-      agentName: agentId
-        ? (agentNames.get(agentId) ?? `unknown agent ${agentId}`)
-        : null,
-      summary: stage?.summary ?? null,
-      failureReason: stage?.failureReason ?? null,
-      isCurrent: currentStageKey !== null && entry.key === currentStageKey,
-      isLoop,
-      loopPhase: entry.loop ? entry.loop.phase : null,
-      skippedReason: stage?.skipReason ?? null,
-      overridden: stage?.overridden ?? false,
-    };
-  };
-
-  const spine = ordered
-    .filter((entry) => entry.loop === null)
-    .map((entry) => toNode(entry, false));
-
-  const loopsByReview = new Map<string, RailLoop>();
-  for (const entry of ordered) {
-    if (!entry.loop) continue;
-    const existing = loopsByReview.get(entry.loop.reviewStageKey);
-    const loop: RailLoop = existing ?? {
-      reviewStageKey: entry.loop.reviewStageKey,
-      reviewName:
-        plan.stages.find((stage) => stage.key === entry.loop?.reviewStageKey)
-          ?.name ?? entry.loop.reviewStageKey,
-      nodes: [],
-      activated: false,
-      maxReviewCycles: entry.loop.maxReviewCycles,
-      cycle: 0,
-    };
-    const node = toNode(entry, true);
-    loop.nodes.push(node);
-    if (node.status !== "PENDING" && node.status !== "SKIPPED")
-      loop.activated = true;
-    if (
-      node.status === "RUNNING" ||
-      node.status === "COMPLETED" ||
-      node.status === "FAILED"
-    )
-      loop.activated = true;
-    loop.cycle = Math.max(loop.cycle, node.cycle);
-    loopsByReview.set(entry.loop.reviewStageKey, loop);
-  }
-
-  const counted = ordered.filter((entry) => !entry.conditional);
-  const completed = counted.filter(
-    (entry) => byKey.get(entry.key)?.status === "COMPLETED",
-  ).length;
-
-  return {
-    spine,
-    loops: [...loopsByReview.values()],
-    currentKey: currentStageKey,
-    progress: { completed, total: counted.length },
-  };
-}
-
 /** Roles a human must map to an agent: task and review stages only. */
 export function planRoleOptions(
   plan: StagePlan,
@@ -1449,16 +1305,19 @@ export function approvalGateLabel(gate: string): string {
  *
  * This is the page's semantic state ("Ready for your review"), not a repeat of
  * the run status word and not a raw gate key: `final_acceptance` and
- * `final_verify` never reach the screen as identifiers.
+ * `final_verify` never reach the screen as identifiers. The run page's own 20px
+ * state comes from `run-view.ts`; this headline belongs to the decision sheet,
+ * where the final gate reads "Ready to finish" because the work is done and the
+ * remaining question is whether to accept it.
  */
 export function approvalStateHeadline(gate: string): string {
   switch (gate) {
     case "final_acceptance":
-      return "Ready for your review";
+      return "Ready to finish";
     case "review_reject":
       return "Review rejected — your call";
     case "review_cycle_exhausted":
-      return "Review cycles exhausted — your call";
+      return "Changes requested — fix cycles exhausted";
     default:
       return "Waiting for your decision";
   }
@@ -1595,6 +1454,8 @@ export interface ApprovalEvidenceVerification {
   label: string;
   /** Short form for the concise summary: `7 tests passed`. */
   shortLabel: string;
+  /** Attempt the verification belongs to, so its own test rows can be shown. */
+  attemptId: string;
   attemptNumber: number;
   stageKey: string;
   /** `true` when the verification belongs to the stage that opened the gate. */
@@ -1733,6 +1594,7 @@ export function approvalEvidenceView(input: {
               status: attempt.verification.status,
               counts: counts.counts,
             }),
+            attemptId: attempt.id,
             attemptNumber: attempt.attemptNumber,
             stageKey: attempt.stageKey,
             onGateStage: attempt.stageKey === approval.stageKey,

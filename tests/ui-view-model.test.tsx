@@ -8,9 +8,11 @@ import { buildStagePlan, builtinTemplate } from "../src/core/templates.js";
 import type {
   AgentRecord,
   ArtifactRecord,
+  AttemptRecord,
   EventRecord,
   GitSnapshotRecord,
   ProjectRecord,
+  ReviewVerdictRecord,
   RunRecord,
   StageRecord,
   TaskRecord,
@@ -31,7 +33,6 @@ import {
   artifactView,
   attemptCountsView,
   buildRunSearchParams,
-  buildStageRail,
   categoryCounts,
   classifyDiff,
   commandLine,
@@ -85,6 +86,27 @@ import {
   verificationLabel,
   verificationShortLabel,
 } from "../src/ui/view-model.js";
+import {
+  activityEntries,
+  activitySentence,
+  activeWorkSentence,
+  blockerFact,
+  buildRunMilestones,
+  changedFilesView,
+  checksFact,
+  diffFiles,
+  eventSeverity,
+  eventSeverityLabel,
+  evidenceTabForStage,
+  latestTestsForAttempt,
+  rawLogEntries,
+  reviewHistory,
+  runStateView,
+  runTabLabel,
+  runTabs,
+  verificationFailed,
+  verificationHistory,
+} from "../src/ui/run-view.js";
 
 /* ------------------------------- fixtures ------------------------------ */
 
@@ -213,6 +235,100 @@ function event(id: number, patch: Partial<EventRecord> = {}): EventRecord {
   };
 }
 
+function attempt(
+  id: string,
+  attemptNumber: number,
+  stageKey: string,
+  verificationStatus: "passed" | "failed" | "unavailable" | null,
+): AttemptRecord {
+  return {
+    id,
+    taskId: `task-${stageKey}`,
+    runId: "run-1",
+    stageKey,
+    attemptNumber,
+    reason: null,
+    previousAttemptId: null,
+    kind: "agent",
+    status: "COMPLETED",
+    agentId: "agent-impl",
+    adapterKind: "mock",
+    agentSessionId: null,
+    promptPacket: null,
+    promptText: "prompt",
+    inputs: [],
+    resultStatus: "completed",
+    resultSummary: null,
+    exitCode: 0,
+    usage: null,
+    usageKnown: false,
+    artifacts: [],
+    reviewVerdictId: null,
+    verification: verificationStatus
+      ? {
+          status: verificationStatus,
+          summary: "1 command exited 0",
+          reason: null,
+          mode: "commands",
+          commandCount: 1,
+          counts: null,
+        }
+      : null,
+    error: null,
+    createdAt: "2026-09-22T10:00:00.000Z",
+    startedAt: "2026-09-22T10:00:00.000Z",
+    endedAt: "2026-09-22T10:01:00.000Z",
+  };
+}
+
+function testRun(
+  id: string,
+  attemptId: string,
+  createdAt: string,
+  total: number,
+): TestRunRecord {
+  return {
+    id,
+    runId: "run-1",
+    taskId: null,
+    attemptId,
+    stageKey: "verify",
+    framework: "node:test",
+    status: "passed",
+    passed: total,
+    failed: 0,
+    skipped: 0,
+    total,
+    parsedConfidently: true,
+    summary: null,
+    durationMs: 1200,
+    createdAt,
+  };
+}
+
+function verdictRecord(
+  patch: Partial<ReviewVerdictRecord> & { id: string },
+): ReviewVerdictRecord {
+  const { id, ...rest } = patch;
+  const base: ReviewVerdictRecord = {
+    id,
+    runId: "run-1",
+    taskId: "task-review",
+    attemptId: "attempt-review",
+    stageKey: "review",
+    cycle: 1,
+    valid: true,
+    validationErrors: [],
+    verdict: "APPROVE",
+    summary: null,
+    issues: [],
+    confidence: null,
+    reviewer: null,
+    raw: "{}",
+    createdAt: "2026-09-22T10:00:00.000Z",
+  };
+  return { ...base, ...rest, id };
+}
 /* ------------------------------ formatting ----------------------------- */
 
 test("unknown values never render as zero", () => {
@@ -359,68 +475,600 @@ test("events merge by id, stay ordered and respect the cap", () => {
   assert.deepEqual(counts[0], { category: "agent", count: 2 });
 });
 
-/* ------------------------------ stage rail ----------------------------- */
+/* ------------------------- run screen (pass 3) ------------------------- */
 
-test("stage rail separates the spine from the review/fix branch", () => {
+test("milestones group the frozen plan into plain, honest steps", () => {
   const stages = [
+    stage("plan", { status: "COMPLETED", attemptCount: 1 }),
     stage("implement", {
       status: "COMPLETED",
       attemptCount: 1,
       summary: "done",
     }),
     stage("verify", { status: "COMPLETED" }),
-    stage("review", {
-      status: "WAITING_APPROVAL",
-      cycle: 1,
-      attemptCount: 2,
-      overridden: true,
-    }),
+    stage("review", { status: "WAITING_APPROVAL", cycle: 1, attemptCount: 2 }),
     stage("review.fix", { status: "COMPLETED", cycle: 1, attemptCount: 1 }),
-    stage("review.retest", { status: "RUNNING", cycle: 1 }),
+    stage("review.retest", { status: "COMPLETED", cycle: 1 }),
   ];
-  const rail = buildStageRail(
-    plan,
-    stages,
-    [task("implement")],
-    agents,
-    "review",
+  const milestones = buildRunMilestones(plan, stages, agents, "review");
+  assert.deepEqual(
+    milestones.map((milestone) => milestone.name),
+    ["Plan", "Build", "Verify", "Review", "Final"],
   );
   assert.deepEqual(
-    rail.spine.map((node) => node.key),
-    ["plan", "implement", "verify", "review", "final_verify", "final"],
+    milestones.map((milestone) => milestone.state),
+    ["complete", "complete", "complete", "current", "wait"],
   );
-  assert.equal(rail.loops.length, 1);
-  const loop = rail.loops[0]!;
-  assert.equal(loop.reviewStageKey, "review");
+  const review = milestones[3]!;
   assert.deepEqual(
-    loop.nodes.map((node) => node.loopPhase),
-    ["fix", "retest"],
+    review.stages.map((entry) => entry.key),
+    ["review", "review.fix", "review.retest"],
   );
-  assert.equal(loop.activated, true);
-  assert.equal(loop.maxReviewCycles, 2);
-  assert.equal(loop.cycle, 1);
-  const reviewNode = rail.spine.find((node) => node.key === "review")!;
-  assert.equal(reviewNode.isCurrent, true);
-  assert.equal(reviewNode.overridden, true);
-  assert.equal(reviewNode.agentName, null);
-  const implementNode = rail.spine.find((node) => node.key === "implement")!;
-  assert.equal(implementNode.agentName, "DeepSeek V4.1 Flash");
-  assert.equal(implementNode.attemptCount, 1);
-  assert.deepEqual(rail.progress, { completed: 2, total: 6 });
+  // The review branch reads as a plain chronology with the cycle it belongs to.
+  assert.equal(review.stages[1]!.loopLabel, "fixes from review cycle 1 of 2");
+  assert.equal(review.stages[1]!.loopPhase, "fix");
+  assert.equal(review.stages[2]!.name, "Structured review: re-verification");
+  // The current stage's own status word is the only state word shown.
+  assert.equal(review.statusWord, "Waiting for you");
+  assert.equal(review.stages[0]!.statusWord, "Waiting for you");
+  // No raw enum ever leaves the model as display copy.
+  assert.ok(
+    !milestones.some((milestone) => /WAITING_APPROVAL/.test(milestone.stateWord)),
+  );
+  // The last two plan stages are the final milestone, not a Verify step.
+  assert.deepEqual(
+    milestones[4]!.stages.map((entry) => entry.key),
+    ["final_verify", "final"],
+  );
 });
 
-test("a dormant loop branch is reported as dormant", () => {
-  const rail = buildStageRail(
-    plan,
-    [stage("implement", { status: "RUNNING" })],
-    [],
+test("a milestone with no stages is omitted instead of drawn empty", () => {
+  const withoutFinal = {
+    ...plan,
+    stages: plan.stages.filter(
+      (entry) =>
+        entry.loop === null &&
+        entry.kind !== "review" &&
+        entry.kind !== "verify" &&
+        entry.kind !== "final_approval",
+    ),
+  };
+  const milestones = buildRunMilestones(
+    withoutFinal,
+    [stage("implement", { status: "FAILED", failureReason: "boom" })],
     agents,
     "implement",
   );
-  const loop = rail.loops[0]!;
-  assert.equal(loop.activated, false);
-  assert.equal(loop.cycle, 0);
-  assert.deepEqual(rail.progress, { completed: 0, total: 6 });
+  assert.deepEqual(
+    milestones.map((milestone) => milestone.name),
+    ["Plan", "Build"],
+  );
+  assert.equal(milestones[1]!.state, "failed");
+  assert.equal(milestones[1]!.icon, "!");
+  assert.equal(milestones[1]!.stages[0]!.failureReason, "boom");
+});
+
+test("the final milestone is the last verification plus the human gate", () => {
+  const withoutReview = {
+    ...plan,
+    stages: plan.stages.filter((entry) => entry.loop === null && entry.kind !== "review"),
+  };
+  const milestones = buildRunMilestones(
+    withoutReview,
+    [stage("verify", { status: "COMPLETED" })],
+    agents,
+    "final_verify",
+  );
+  assert.deepEqual(
+    milestones.map((milestone) => milestone.name),
+    ["Plan", "Build", "Verify", "Final"],
+  );
+  assert.deepEqual(
+    milestones[3]!.stages.map((entry) => entry.key),
+    ["final_verify", "final"],
+  );
+  assert.equal(milestones[2]!.state, "complete");
+  assert.equal(milestones[3]!.state, "current");
+});
+
+test("the run state is the six semantic sentences, never the enum", () => {
+  const implement = plan.stages.find((entry) => entry.key === "implement")!;
+  const review = plan.stages.find((entry) => entry.key === "review")!;
+  assert.equal(
+    runStateView({
+      status: "WAITING_APPROVAL",
+      gate: "final_acceptance",
+      stage: review,
+    }).headline,
+    "Ready for your review",
+  );
+  assert.equal(
+    runStateView({ status: "WAITING_APPROVAL", gate: "review_reject" }).headline,
+    "Changes requested",
+  );
+  assert.equal(
+    runStateView({
+      status: "WAITING_APPROVAL",
+      gate: "review_cycle_exhausted",
+    }).headline,
+    "Changes requested",
+  );
+  assert.equal(
+    runStateView({
+      status: "RUNNING",
+      stage: implement,
+      agentName: "DeepSeek V4.1 Flash",
+    }).headline,
+    "DeepSeek V4.1 Flash is implementing",
+  );
+  assert.equal(
+    runStateView({
+      status: "WAITING_INPUT",
+      stage: implement,
+      agentName: "DeepSeek V4.1 Flash",
+    }).headline,
+    "DeepSeek V4.1 Flash needs your input",
+  );
+  assert.equal(
+    runStateView({
+      status: "FAILED",
+      failedStageName: "Implementation",
+    }).headline,
+    "Implementation failed",
+  );
+  assert.equal(
+    runStateView({ status: "COMPLETED" }).headline,
+    "Completed",
+  );
+  // A persisted enum is never used as the sentence.
+  assert.ok(
+    !runStateView({ status: "RUNNING", stage: review }).headline.includes(
+      "RUNNING",
+    ),
+  );
+});
+
+test("tabs hide the panels that do not apply to this run", () => {
+  assert.deepEqual(
+    runTabs({
+      hasChanges: true,
+      hasVerification: true,
+      hasReview: true,
+    }).map((tab) => tab.label),
+    ["Overview", "Changes", "Verification", "Review", "Activity"],
+  );
+  assert.deepEqual(
+    runTabs({
+      hasChanges: false,
+      hasVerification: true,
+      hasReview: false,
+      counts: { verification: 2 },
+    }).map((tab) => tab.id),
+    ["overview", "verification", "activity"],
+  );
+  // A stage click lands on the tab that actually holds its evidence.
+  assert.equal(evidenceTabForStage("verify"), "verification");
+  assert.equal(evidenceTabForStage("review"), "review");
+  assert.equal(evidenceTabForStage("task"), "overview");
+  assert.equal(runTabLabel("activity"), "Activity");
+});
+
+test("activity sentences are lifecycle lines, never output frames", () => {
+  const context = {
+    stageNames: new Map([["implement", "Implementation"]]),
+    attemptNumbers: new Map([["attempt-1", 2]]),
+    agentNames: new Map([["agent-impl", "DeepSeek V4.1 Flash"]]),
+  };
+  const started = event(1, {
+    category: "stage",
+    type: "stage.started",
+    payload: { agentId: "agent-impl" },
+  });
+  const output = event(2, {
+    category: "agent",
+    type: "agent.output",
+    payload: { message: "raw protocol frame", stream: "stdout" },
+  });
+  const failed = event(3, {
+    category: "agent",
+    type: "agent.failed",
+    payload: { agentId: "agent-impl", message: "adapter exited 1" },
+  });
+  const heartbeat = event(4, { category: "system", type: "HEARTBEAT" });
+
+  assert.equal(
+    activitySentence(started, context),
+    "DeepSeek V4.1 Flash started Implementation",
+  );
+  assert.equal(activitySentence(output, context), null);
+  assert.equal(
+    activitySentence(failed, context),
+    "DeepSeek V4.1 Flash failed on Implementation: adapter exited 1",
+  );
+  assert.equal(activitySentence(heartbeat, context), null);
+
+  const entries = activityEntries([started, output, failed, heartbeat], context);
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    [1, 3],
+  );
+  // Only the failed line is flagged as something that went wrong.
+  assert.deepEqual(
+    activityEntries([started, output, failed], context, { attentionOnly: true }).map(
+      (entry) => entry.id,
+    ),
+    [3],
+  );
+
+  // The raw log stream keeps every frame, with its stream and severity.
+  const raw = rawLogEntries([started, output, failed], context);
+  assert.equal(raw.length, 3);
+  assert.equal(raw[1]!.stream, "stdout");
+  assert.equal(raw[1]!.severity, "detail");
+  assert.equal(raw[1]!.stageName, "Implementation");
+  assert.equal(raw[1]!.attemptNumber, 2);
+  assert.equal(raw[0]!.severity, "progress");
+  assert.equal(raw[2]!.severity, "attention");
+  assert.equal(eventSeverityLabel("attention"), "Needs attention");
+  assert.equal(eventSeverityLabel("detail"), "Output");
+  assert.equal(eventSeverity(output), "detail");
+});
+
+test("one action is one activity line, not three bookkeeping rows", () => {
+  const context = {
+    stageNames: new Map([["implement", "Implementation"]]),
+    attemptNumbers: new Map([["attempt-1", 1]]),
+    agentNames: new Map([["agent-impl", "DeepSeek V4.1 Flash"]]),
+  };
+  const bookkeeping = [
+    event(1, {
+      category: "attempt",
+      type: "attempt.created",
+      payload: { attemptNumber: 1, agentId: "agent-impl" },
+    }),
+    event(2, {
+      category: "stage",
+      type: "stage.attempt_started",
+      payload: { attemptNumber: 1 },
+    }),
+    event(3, {
+      category: "agent",
+      type: "agent.started",
+      payload: { agentId: "agent-impl" },
+    }),
+    event(4, {
+      category: "stage",
+      type: "stage.completed",
+      payload: { summary: "done" },
+    }),
+    event(5, {
+      category: "agent",
+      type: "agent.completed",
+      payload: { agentId: "agent-impl" },
+    }),
+  ];
+  const entries = activityEntries(bookkeeping, context);
+  assert.deepEqual(
+    entries.map((entry) => entry.sentence),
+    [
+      "DeepSeek V4.1 Flash started Implementation",
+      "DeepSeek V4.1 Flash finished Implementation",
+    ],
+  );
+  // The raw log stream still holds every one of the five events.
+  assert.equal(rawLogEntries(bookkeeping, context).length, 5);
+});
+
+test("the active-work sentence names the real work", () => {
+  const implement = plan.stages.find((entry) => entry.key === "implement")!;
+  const verify = plan.stages.find((entry) => entry.key === "verify")!;
+  const review = plan.stages.find((entry) => entry.key === "review")!;
+  const planStage = plan.stages.find((entry) => entry.key === "plan")!;
+  assert.equal(
+    activeWorkSentence(planStage, "DeepSeek V4.1 Flash"),
+    "DeepSeek V4.1 Flash is planning",
+  );
+  assert.equal(
+    activeWorkSentence(implement, "DeepSeek V4.1 Flash"),
+    "DeepSeek V4.1 Flash is implementing",
+  );
+  assert.equal(
+    activeWorkSentence(verify, "DeepSeek V4.1 Flash"),
+    "DeepSeek V4.1 Flash is running verification",
+  );
+  assert.equal(activeWorkSentence(verify, null), "Verification is running");
+  assert.equal(
+    activeWorkSentence(review, "Claude Opus 4.8"),
+    "Claude Opus 4.8 is reviewing",
+  );
+  assert.equal(
+    activeWorkSentence(review, null),
+    "Review is running",
+  );
+  assert.equal(activeWorkSentence(null, null), "Implementation is running");
+});
+
+test("a unified diff splits into per-file sections without losing a line", () => {
+  const diff = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "index 111..222 100644",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,2 +1,3 @@",
+    " keep",
+    "-drop",
+    "+added",
+    "+also added",
+    "diff --git a/src/b.ts b/src/b.ts",
+    "@@ -1,1 +1,1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+  const sections = diffFiles(diff);
+  assert.deepEqual(
+    sections.map((section) => section.path),
+    ["src/a.ts", "src/b.ts"],
+  );
+  assert.equal(sections[0]!.additions, 2);
+  assert.equal(sections[0]!.removals, 1);
+  assert.equal(sections[1]!.additions, 1);
+  assert.equal(sections[1]!.removals, 1);
+  // Every input line is still represented, including the headers.
+  assert.equal(
+    sections.reduce((total, section) => total + section.lines.length, 0),
+    13,
+  );
+  assert.deepEqual(diffFiles(""), []);
+});
+
+test("verification history is one entry per attempt and newest first", () => {
+  const attempts: AttemptRecord[] = [
+    attempt("attempt-1", 1, "verify", "passed"),
+    attempt("attempt-2", 2, "final_verify", "passed"),
+    attempt("attempt-3", 1, "implement", null),
+  ];
+  const tests: TestRunRecord[] = [
+    testRun("t1", "attempt-1", "2026-09-22T10:00:00.000Z", 7),
+    testRun("t2", "attempt-2", "2026-09-22T12:00:00.000Z", 7),
+  ];
+  const history = verificationHistory({ attempts, tests, commands: [] });
+  assert.deepEqual(
+    history.map((entry) => entry.attemptId),
+    ["attempt-2", "attempt-1"],
+  );
+  assert.equal(history[0]!.latest, true);
+  assert.equal(history[1]!.latest, false);
+  // The newest attempt's counts are its own 7 — never the two records added up.
+  assert.equal(history[0]!.counts!.total, 7);
+  assert.equal(history[0]!.shortLabel, "7 tests passed");
+  // The attempt with no verification, tests or commands is not listed at all.
+  assert.ok(!history.some((entry) => entry.attemptId === "attempt-3"));
+});
+
+test("a later attempt shadows an earlier one and older ones stay collapsed", () => {
+  const attempts: AttemptRecord[] = [
+    attempt("attempt-1", 1, "verify", "failed"),
+    attempt("attempt-2", 2, "verify", "passed"),
+  ];
+  const history = verificationHistory({ attempts, tests: [], commands: [] });
+  assert.equal(history.length, 2);
+  assert.equal(verificationFailed(history[0]!), false);
+  assert.equal(verificationFailed(history[1]!), true);
+});
+
+test("review history keeps every finding with its path and severity", () => {
+  const verdicts: ReviewVerdictRecord[] = [
+    verdictRecord({
+      id: "rev-1",
+      cycle: 1,
+      createdAt: "2026-09-22T10:00:00.000Z",
+      verdict: "REJECT",
+      reviewer: null,
+      summary: "the parser drops empty input",
+      issues: [
+        {
+          severity: "blocking",
+          description: "empty input throws",
+          path: "src/parser.ts",
+          line: 42,
+        },
+      ],
+    }),
+    verdictRecord({
+      id: "rev-2",
+      cycle: 2,
+      createdAt: "2026-09-22T12:00:00.000Z",
+      verdict: "APPROVE",
+      reviewer: "Claude Opus 4.8",
+      summary: "clean",
+      issues: [
+        { severity: "nit", description: "naming", path: "src/a.ts", line: 3 },
+        { severity: "nit", description: "comment", path: null, line: null },
+      ],
+    }),
+  ];
+  const history = reviewHistory({
+    verdicts,
+    attempts: [
+      { id: "attempt-review", agentId: "agent-reviewer" },
+    ] as AttemptRecord[],
+    agents: [
+      { id: "agent-reviewer", name: "Claude Opus 4.8" },
+    ] as AgentRecord[],
+  });
+  assert.deepEqual(
+    history.map((entry) => entry.id),
+    ["rev-2", "rev-1"],
+  );
+  assert.equal(history[0]!.label, "Approve");
+  assert.equal(history[0]!.blockers, 0);
+  assert.equal(history[0]!.suggestions, 2);
+  assert.equal(history[0]!.reviewer, "Claude Opus 4.8");
+  // A later verdict's kind is preserved even when the reviewer field is absent.
+  assert.equal(history[1]!.reviewer, "Claude Opus 4.8");
+  assert.equal(history[1]!.reviewerSource, "reviewer attempt agent");
+  assert.equal(history[1]!.issues[0]!.disposition, "blocker");
+  assert.equal(history[1]!.issues[0]!.location, "src/parser.ts:42");
+  assert.equal(history[1]!.issues[0]!.severity, "blocking");
+});
+
+test("decision facts never claim a pass that was not recorded", () => {
+  const reviewCycle = reviewCycleView({
+    reviewCycle: 2,
+    policy: { maxReviewCycles: 2 },
+  });
+  const base = {
+    reviewCycle,
+    verdicts: [] as ReviewVerdictRecord[],
+    attempts: [attempt("attempt-1", 1, "review", "passed")],
+    tests: [testRun("t1", "attempt-1", "2026-09-22T10:00:00.000Z", 7)],
+    agents: [{ id: "agent-reviewer", name: "Claude" }] as AgentRecord[],
+  };
+  const evidence = approvalEvidenceView({
+    approval: { gate: "final_acceptance", reason: null, stageKey: "final" },
+    ...base,
+  })!;
+  // Passing tests alone: the recorded verification status is what is reported,
+  // and a verification recorded on another stage says where it came from.
+  assert.equal(
+    checksFact(evidence).label,
+    "Latest verification: 7 tests passed",
+  );
+  assert.match(checksFact(evidence).detail!, /not on this gate's stage/);
+  assert.ok(!/all checks passed/i.test(checksFact(evidence).label));
+
+  const onGateStage = approvalEvidenceView({
+    approval: { gate: "review_reject", reason: null, stageKey: "review" },
+    ...base,
+  })!;
+  assert.equal(checksFact(onGateStage).label, "7 tests passed");
+  assert.match(checksFact(onGateStage).detail!, /Command passed/);
+
+  const failed = approvalEvidenceView({
+    approval: { gate: "final_acceptance", reason: null, stageKey: "final" },
+    ...base,
+    attempts: [
+      {
+        ...attempt("attempt-1", 1, "review", "failed"),
+      },
+    ],
+  })!;
+  assert.match(checksFact(failed).label, /Verification failed/);
+
+  const invalid = approvalEvidenceView({
+    approval: { gate: "review_reject", reason: null, stageKey: "review" },
+    ...base,
+    verdicts: [
+      verdictRecord({
+        id: "rev-bad",
+        cycle: 1,
+        valid: false,
+        validationErrors: ["verdict: expected one of APPROVE"],
+        createdAt: "2026-09-22T10:00:00.000Z",
+      }),
+    ],
+  })!;
+  assert.equal(blockerFact(invalid).label, "Reviewer payload failed validation");
+  assert.equal(blockerFact(invalid).tone, "danger");
+  assert.match(blockerFact(invalid).detail!, /unvalidated/);
+});
+
+test("changed-file counts come from the recorded paths, never a false zero", () => {
+  assert.equal(changedFilesView({}).count, null);
+  assert.equal(changedFilesView({}).label, "Changed files UNKNOWN");
+  // The dogfood case: a stat that does not parse, but two recorded paths.
+  const recorded = changedFilesView({
+    snapshot: {
+      id: "s1",
+      runId: "run-1",
+      stageKey: "implement",
+      attemptId: null,
+      phase: "after",
+      headSha: null,
+      branch: "main",
+      detached: false,
+      dirty: true,
+      stagedPaths: [],
+      unstagedPaths: ["greeting.mjs", "greeting.test.mjs"],
+      untrackedPaths: [],
+      diffStat: "+40 / −1",
+      localCommits: [],
+      ahead: null,
+      behind: null,
+      unavailableReason: null,
+      capturedAt: "2026-09-22T10:05:00.000Z",
+    },
+  });
+  assert.equal(recorded.count, 2);
+  assert.equal(recorded.label, "2 files changed");
+  // A parseable stat alone is still used when no paths were recorded.
+  const statOnly = changedFilesView({
+    diffStat: " 2 files changed, 10 insertions(+), 4 deletions(-)",
+  });
+  assert.equal(statOnly.count, 2);
+  assert.equal(statOnly.label, "2 files changed");
+  assert.equal(statOnly.detail, "+10 / −4");
+  // An unparseable stat with no paths stays explicitly unknown.
+  assert.equal(changedFilesView({ diffStat: "unavailable" }).count, null);
+});
+
+test("the decision sheet shows the latest tests of one attempt only", () => {
+  const tests: TestRunRecord[] = Array.from({ length: 14 }, (_, index) =>
+    testRun(
+      `t${index}`,
+      index < 7 ? "attempt-1" : "attempt-2",
+      `2026-09-22T10:${String(index).padStart(2, "0")}:00.000Z`,
+      index,
+    ),
+  );
+  const view = latestTestsForAttempt(tests, "attempt-2", 7);
+  assert.equal(view.rows.length, 7);
+  assert.equal(view.hidden, 0);
+  // Newest first, and only the correlated attempt's rows.
+  assert.ok(view.rows.every((row) => /^t(7|8|9|1[0-3])$/.test(row.id)));
+  assert.equal(view.rows[0]!.id, "t13");
+  const capped = latestTestsForAttempt(tests, "attempt-2", 3);
+  assert.equal(capped.rows.length, 3);
+  assert.equal(capped.hidden, 4);
+  assert.deepEqual(latestTestsForAttempt(tests, null), {
+    rows: [],
+    hidden: 0,
+  });
+});
+
+test("a dormant skipped loop stage never contradicts a completed review", () => {
+  const stages = [
+    stage("plan", { status: "COMPLETED" }),
+    stage("implement", { status: "COMPLETED" }),
+    stage("verify", { status: "COMPLETED" }),
+    stage("review", { status: "COMPLETED", cycle: 1 }),
+    stage("review.fix", { status: "SKIPPED", skipReason: "not activated" }),
+    stage("review.retest", {
+      status: "SKIPPED",
+      skipReason: "not activated",
+    }),
+  ];
+  const milestones = buildRunMilestones(plan, stages, agents, "final_verify");
+  const verify = milestones.find((entry) => entry.name === "Verify")!;
+  const review = milestones.find((entry) => entry.name === "Review")!;
+  // The re-verification loop stage belongs to Review only — Verify must not
+  // report the loop's own skip beside the completed verification.
+  assert.deepEqual(
+    verify.stages.map((entry) => entry.key),
+    ["verify"],
+  );
+  assert.equal(verify.state, "complete");
+  assert.equal(verify.statusWord, "Completed");
+  assert.deepEqual(
+    review.stages.map((entry) => entry.key),
+    ["review", "review.fix", "review.retest"],
+  );
+  assert.equal(review.state, "complete");
+  assert.equal(
+    review.statusWord,
+    "Completed",
+    "a skipped dormant fix stage does not label the review as skipped",
+  );
 });
 
 test("role mapping only covers agent-backed stages", () => {

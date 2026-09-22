@@ -22,14 +22,17 @@
 import type { ApprovalDecision } from "../../core/types.js";
 import {
   approvalStateHeadline,
-  approvalSummaryLine,
+  classNames,
   formatTimestamp,
-  issueDisposition,
-  issueDispositionLabel,
   type ApprovalEvidence,
   type DecisionOption,
 } from "../view-model.js";
-import { Button, Disclosure, Field, Notice, Pill, TextArea } from "./Bits.js";
+import {
+  decisionLead,
+  type DecisionFact,
+  type VerificationTestRow,
+} from "../run-view.js";
+import { Button, Disclosure, Field, TextArea } from "./Bits.js";
 
 function Provenance({ evidence }: { evidence: ApprovalEvidence }) {
   const { verdict, verification } = evidence;
@@ -96,8 +99,11 @@ function Provenance({ evidence }: { evidence: ApprovalEvidence }) {
 
 export function ApprovalEvidenceBlock({
   evidence,
+  facts = [],
 }: {
   evidence: ApprovalEvidence;
+  /** Recorded facts shown before any button: changes, checks, blockers. */
+  facts?: readonly DecisionFact[];
 }) {
   const { verdict, verification } = evidence;
   return (
@@ -105,87 +111,81 @@ export function ApprovalEvidenceBlock({
       <h2 className="evidence-summary__state">
         {approvalStateHeadline(evidence.gate)}
       </h2>
-      <p className="evidence-summary__lead">{approvalSummaryLine(evidence)}</p>
-      <div className="evidence-summary__facts">
-        <span>{evidence.cycle.label}</span>
-        {verdict ? <span>{verdict.tally.label}</span> : null}
-        <span>
-          {verification
-            ? `Verification: ${verification.shortLabel}`
-            : "No verification recorded"}
-        </span>
-      </div>
+      <p className="evidence-summary__lead">{decisionLead(evidence)}</p>
+      {facts.length > 0 ? (
+        <ul className="evidence-facts">
+          {facts.map((fact, index) => (
+            <li
+              key={`${index}-${fact.label}`}
+              className={classNames(
+                "evidence-fact",
+                `evidence-fact--${fact.tone}`,
+              )}
+            >
+              {fact.label}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
 
-/** The full payload, one level down: prose, findings and provenance. */
+/**
+ * Everything behind the decision, in one collapsed disclosure: the persisted
+ * provenance, each fact's own detail, the attempt's test rows and what each
+ * decision does. Nothing is deleted; none of it competes with the buttons.
+ */
 export function ApprovalEvidenceDetails({
   evidence,
   options,
+  facts = [],
+  latestTests = [],
+  testsHidden = 0,
 }: {
   evidence: ApprovalEvidence;
   options: readonly DecisionOption[];
+  facts?: readonly DecisionFact[];
+  latestTests?: readonly VerificationTestRow[];
+  testsHidden?: number;
 }) {
-  const { verdict } = evidence;
   return (
     <>
-      {verdict ? (
-        <Disclosure summary={`Read full review (${verdict.tally.label})`}>
-          <div className="evidence-verdict-head">
-            <Pill tone={verdict.tone} dot={false}>
-              {verdict.label}
-            </Pill>
-            <span className="faint small">
-              {verdict.reviewer} · stage {verdict.stageKey} · cycle{" "}
-              {verdict.cycle} · {formatTimestamp(verdict.createdAt)}
-            </span>
-          </div>
-          {!verdict.valid ? (
-            <Notice tone="warn">
-              The verdict payload failed validation, so no structured verdict
-              was accepted.
-            </Notice>
-          ) : null}
-          <p className="wrap-anywhere">
-            {verdict.summary ?? "No review summary was recorded."}
-          </p>
-          {verdict.issues.length > 0 ? (
-            <ul className="evidence-issues">
-              {verdict.issues.map((issue, index) => {
-                const disposition = issueDisposition(issue.severity);
-                return (
-                  <li key={index} className="evidence-issue">
-                    <div className="evidence-issue__head">
-                      <Pill
-                        tone={disposition === "blocker" ? "danger" : "muted"}
-                        dot={false}
-                      >
-                        {issueDispositionLabel(disposition)}
-                      </Pill>
-                      <span className="faint small">
-                        reviewed severity: {issue.severity}
-                        {issue.location ? ` · ${issue.location}` : ""}
-                      </span>
-                    </div>
-                    <span className="evidence-issue__body">
-                      {issue.description}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="faint small">The verdict lists no issues.</p>
-          )}
-        </Disclosure>
-      ) : null}
-
       <Disclosure summary="Technical details">
         <Provenance evidence={evidence} />
-      </Disclosure>
-
-      <Disclosure summary="What each decision does">
+        {facts.length > 0 ? (
+          <ul className="stack--tight" style={{ margin: 0, paddingLeft: 18 }}>
+            {facts.map((fact, index) => (
+              <li
+                key={`detail-${index}-${fact.label}`}
+                className="small wrap-anywhere"
+              >
+                <b>{fact.label}</b>
+                {fact.detail ? ` — ${fact.detail}` : ""}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {latestTests.length > 0 ? (
+          <>
+            <span className="faint small">
+              Test rows for this attempt ({latestTests.length}
+              {testsHidden > 0
+                ? ` of ${latestTests.length + testsHidden}`
+                : ""}
+              )
+            </span>
+            <ul className="stack--tight" style={{ margin: 0, paddingLeft: 18 }}>
+              {latestTests.map((test) => (
+                <li key={test.id} className="small wrap-anywhere">
+                  <b>{test.framework}</b> — {test.countsLabel} ·{" "}
+                  {formatTimestamp(test.createdAt)}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+        <span className="faint small">What each decision does</span>
         <ul className="stack--tight" style={{ margin: 0, paddingLeft: 18 }}>
           {options.map((option) => (
             <li key={option.decision} className="small wrap-anywhere">
@@ -202,6 +202,9 @@ export function ApprovalEvidenceDetails({
 export function ApprovalPanel({
   evidence,
   options,
+  facts,
+  latestTests,
+  testsHidden,
   selected,
   reason,
   busy,
@@ -210,9 +213,15 @@ export function ApprovalPanel({
   onReasonChange,
   onCancel,
   onConfirm,
+  onReviewChanges,
+  onOpenReview,
+  showDetails = true,
 }: {
   evidence: ApprovalEvidence;
   options: readonly DecisionOption[];
+  facts?: readonly DecisionFact[];
+  latestTests?: readonly VerificationTestRow[];
+  testsHidden?: number;
   /** The reason-requiring decision the operator selected, if any. */
   selected: ApprovalDecision | null;
   reason: string;
@@ -222,6 +231,15 @@ export function ApprovalPanel({
   onReasonChange: (value: string) => void;
   onCancel: () => void;
   onConfirm: (decision: ApprovalDecision) => void;
+  /** Secondary action at the final gate: read the changes before accepting. */
+  onReviewChanges?: () => void;
+  /** Secondary action: the reviewer's own findings live in the Review tab. */
+  onOpenReview?: () => void;
+  /**
+   * `false` keeps the sheet to its summary, facts and buttons: the run page
+   * renders the technical disclosure once, at the bottom of the page.
+   */
+  showDetails?: boolean;
 }) {
   const selectedOption =
     options.find((option) => option.decision === selected) ?? null;
@@ -231,7 +249,7 @@ export function ApprovalPanel({
   return (
     <div className="stack">
       <div className="approval-evidence" aria-label="Approval evidence">
-        <ApprovalEvidenceBlock evidence={evidence} />
+        <ApprovalEvidenceBlock evidence={evidence} facts={facts} />
 
         <div className="approval-panel">
           <div className="approval-actions">
@@ -239,7 +257,7 @@ export function ApprovalPanel({
               <Button
                 key={option.decision}
                 variant={option.decision === "approve" ? "primary" : "default"}
-                size="sm"
+                size={option.decision === "approve" ? "md" : "sm"}
                 disabled={busy}
                 onClick={() => onConfirm(option.decision)}
               >
@@ -265,10 +283,38 @@ export function ApprovalPanel({
                 The server allows no decision for this gate.
               </span>
             ) : null}
+            {onReviewChanges ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onReviewChanges}
+                disabled={busy}
+              >
+                Review changes
+              </Button>
+            ) : null}
+            {onOpenReview ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onOpenReview}
+                disabled={busy}
+              >
+                Read full review
+              </Button>
+            ) : null}
           </div>
         </div>
 
-        <ApprovalEvidenceDetails evidence={evidence} options={options} />
+        {showDetails ? (
+          <ApprovalEvidenceDetails
+            evidence={evidence}
+            options={options}
+            facts={facts}
+            latestTests={latestTests}
+            testsHidden={testsHidden}
+          />
+        ) : null}
       </div>
 
       {selectedOption ? (

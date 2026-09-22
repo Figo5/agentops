@@ -1222,6 +1222,72 @@ textarea[aria-invalid="true"] {
   font-size: var(--fs-meta);
 }
 
+/*
+ * Decision facts: two or three short recorded facts, as compact chips between
+ * the summary and the buttons. The full provenance of each fact stays under
+ * Technical details so the sheet stays about the decision.
+ */
+.evidence-facts {
+  display: flex;
+  gap: 8px 18px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 6px 0 0;
+  list-style: none;
+  font-size: var(--fs-meta);
+}
+
+.evidence-fact {
+  color: var(--text-2);
+}
+
+.evidence-fact--danger {
+  color: var(--danger);
+}
+
+.evidence-fact--warn {
+  color: var(--warn);
+}
+
+.evidence-fact--success {
+  color: var(--ok);
+}
+
+/* Overview: short operator lines, never a record table. */
+.overview {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.overview h3 {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  font-weight: 590;
+}
+
+.overview__lines {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.overview__line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.overview__label {
+  flex: none;
+  width: 96px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
 /* Quiet, secondary run controls: a disclosure, not a loud competitor. */
 .run-quiet-controls {
   display: flex;
@@ -1588,64 +1654,488 @@ a.list__row:focus-visible {
   border-bottom: none;
 }
 
-/* ------------------------------- 11. rail ------------------------------ */
+/* ------------------------- 11. run screen (pass 3) --------------------- */
 
-.rail {
+/*
+ * One screen, read top-down: project and goal, the single semantic state, the
+ * horizontal milestone progress, the one decision sheet, then five tabs. The
+ * page is a single column at every width, so evidence is never squeezed into a
+ * third of the viewport.
+ */
+.run-view {
+  display: grid;
+  gap: 22px;
+  max-width: 100%;
+}
+
+.run-head {
+  display: grid;
+  gap: 6px;
+}
+
+.run-head__crumb {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.run-head__title h1 {
+  margin: 0;
+}
+
+.run-head__state {
+  display: grid;
+  gap: 2px;
+}
+
+/* The page's 20px semantic state. Orange is used when it needs the operator. */
+.run-state {
+  font-size: var(--fs-section);
+  letter-spacing: -0.014em;
+}
+
+.run-state--accent {
+  color: var(--accent);
+}
+
+.run-state--success {
+  color: var(--ok);
+}
+
+.run-state--danger {
+  color: var(--danger);
+}
+
+.run-state--warn {
+  color: var(--warn);
+}
+
+.run-state--active,
+.run-state--neutral,
+.run-state--muted {
+  color: var(--text);
+}
+
+.run-head__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.run-sheet__headline {
+  font-size: var(--fs-section);
+  letter-spacing: -0.014em;
+}
+
+/**
+ * Compact milestone progress: equal-height buttons, no record rows, and the
+ * whole stage chronology behind one collapsed disclosure.
+ */
+.progress {
   display: grid;
   gap: 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
 
-.rail__node {
-  position: relative;
-  padding: 0 0 12px 22px;
+.progress__list {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.rail__node::before {
-  content: "";
-  position: absolute;
-  left: 5px;
-  top: 16px;
-  bottom: -2px;
-  width: 1px;
+.progress__step {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.progress__button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.progress__button:hover {
+  background: var(--hover);
+}
+
+.progress__button[aria-current="true"] {
+  background: var(--accent-soft);
+}
+
+.progress__icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.progress__icon--complete {
+  color: var(--ok);
+}
+
+.progress__icon--current {
+  color: var(--accent);
+}
+
+.progress__icon--failed {
+  color: var(--danger);
+}
+
+.progress__icon--wait {
+  color: var(--text-2);
+}
+
+.progress__name {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.progress__state {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+.progress__details {
+  border-top: 1px solid var(--hairline);
+}
+
+.progress__stages {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.progress__stage {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.progress__stagebutton {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.progress__stagebutton:hover {
+  background: var(--hover);
+}
+
+/* Selection: the same orange marker the rest of the system uses. */
+.progress__stagebutton[aria-current="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.progress__stagename {
+  color: var(--text);
+}
+
+/* One flat panel per tab: no nested boxes, hairlines do the separating. */
+.panel {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* Changes: file navigation above a full-width, readable unified diff. */
+.changes__bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.changes__scope h3 {
+  font-size: var(--fs-body);
+  font-weight: 590;
+}
+
+.changes__scope p {
+  margin: 4px 0 0;
+  max-width: 66ch;
+}
+
+.changes__tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.changes__nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.changes__file {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+
+.changes__file:hover {
+  color: var(--text);
+  border-color: var(--hairline-2);
+}
+
+.changes__file[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.changes__body {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+
+.changes__file-section {
+  min-width: 0;
+}
+
+.changes__file-section h4 {
+  font-weight: 500;
+  font-size: var(--fs-meta);
+}
+
+/* The current diff is the main content: no inner scroll cage of its own. */
+.changes__file-section .diff {
+  max-height: none;
+}
+
+.changes__checkpoints {
+  border-top: 1px solid var(--hairline);
+}
+
+/* Activity: lifecycle sentences; raw logs are their own surface below. */
+.activity__bar {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.activity__bar h3 {
+  font-size: var(--fs-section);
+}
+
+.activity__follow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.activity__list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  max-height: 420px;
+  overflow: auto;
+  list-style: none;
+  border-top: 1px solid var(--hairline);
+}
+
+/* One sentence per line: time, then what happened. Nothing else. */
+.activity__row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--fs-body);
+}
+
+.activity__row[data-attention="true"] {
+  box-shadow: inset 2px 0 0 var(--danger);
+  padding-left: 10px;
+}
+
+.activity__time {
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+}
+
+.activity__text {
+  color: var(--text);
+  min-width: 0;
+}
+
+/* Raw log stream: the audit surface, with its own filters and follow. */
+.rawlog {
+  display: grid;
+  gap: 12px;
+}
+
+.rawlog__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rawlog__follow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.rawlog__filters {
+  display: grid;
+  gap: 10px;
+}
+
+/* Command rows: what ran, what it decided, how long it took. */
+.command-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.command-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.command-row__facts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* The agent's own question, at reading scale, next to the answer field. */
+.operator-question__text {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text);
+}
+
+.activity__summary {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity__summary-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--fs-meta);
+}
+
+.activity__dot {
+  flex: none;
+  align-self: center;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
   background: var(--hairline-2);
 }
 
-.rail__node:last-child::before {
-  display: none;
+/* Stage picker (Overview → Stage evidence) and the review header. */
+.stage-picker {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.rail__marker {
-  position: absolute;
-  left: 0;
-  top: 7px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 1px solid var(--hairline-2);
-  background: var(--surface);
+.stage-picker__button {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.rail__marker--active {
-  border-color: transparent;
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft);
+.stage-picker__button:hover {
+  border-color: var(--hairline-2);
+  background: var(--hover);
 }
 
-.rail__marker--success {
-  border-color: transparent;
-  background: var(--ok);
+.stage-picker__button[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
-.rail__marker--warn {
-  border-color: transparent;
-  background: var(--warn);
+.review__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.rail__marker--danger {
-  border-color: transparent;
-  background: var(--danger);
+.review__reviewer {
+  font-size: var(--fs-meta);
 }
 
+/* Lists and checkpoint rows that are still driven by the shared row button. */
 .rail__button {
   display: block;
   width: 100%;
@@ -1666,79 +2156,6 @@ a.list__row:focus-visible {
 .rail__button[aria-current="true"] {
   background: var(--accent-soft);
   box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.rail__name {
-  display: block;
-  font-size: 14px;
-}
-
-.rail__sub {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  color: var(--text-2);
-  font-size: var(--fs-micro);
-}
-
-.rail__loop {
-  margin: 4px 0 8px 14px;
-  padding: 4px 0 2px 12px;
-  border-left: 1px solid var(--hairline-2);
-}
-
-.rail__loophead {
-  margin-bottom: 4px;
-  color: var(--text-2);
-  font-size: var(--fs-micro);
-  font-family: var(--font);
-}
-
-/* Sentence case, but the label reads as a sentence start. */
-.rail__loophead::first-letter {
-  text-transform: uppercase;
-}
-
-.rail__loop > summary {
-  list-style: none;
-  cursor: pointer;
-}
-
-.rail__loop > summary::-webkit-details-marker {
-  display: none;
-}
-
-.rail__loop > summary::before {
-  content: "›";
-  display: inline-block;
-  width: 1em;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--text-2);
-}
-
-.rail__loop[open] > summary::before {
-  transform: rotate(90deg);
-}
-
-.rail__progress {
-  height: 3px;
-  margin-top: 10px;
-  border-radius: var(--radius-pill);
-  background: var(--elevation);
-  overflow: hidden;
-}
-
-.rail__progress > span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
-.run-constraints {
-  margin-top: 14px;
-  color: var(--text-2);
-  font-size: var(--fs-meta);
 }
 
 /* --------------------------- 12. code and diffs ------------------------ */
@@ -1866,6 +2283,24 @@ a.list__row:focus-visible {
   border-bottom: 1px solid var(--hairline);
 }
 
+/* Explicit evidence navigation scrolls the run's tab list to just below the
+   sticky top bar, so the panel the operator asked for gets the viewport while
+   the header stays reachable above it. `--sticky-offset` is the measured bar
+   height, written by the run view when it reveals the list; the default covers
+   the first paint and the keyboard focus scroll. */
+.run-view .tabs,
+.run-view .tabs .tab {
+  scroll-margin-top: var(--sticky-offset, 76px);
+}
+
+/* An evidence panel keeps the viewport height it was opened for. Without it a
+   short panel — or one whose diff is still loading — leaves the page shorter
+   than the reveal needs, so the tab list could not reach the top. Overview
+   keeps its natural height: it is the top of the page. */
+.run-view .run-evidence {
+  min-height: calc(100vh - var(--sticky-offset, 76px));
+}
+
 .tab {
   padding: 8px 12px;
   min-height: var(--control-md);
@@ -1915,19 +2350,7 @@ a.list__row:focus-visible {
   flex-wrap: wrap;
 }
 
-/* ------------------------------ 14. inspector -------------------------- */
-
-.inspector {
-  display: grid;
-  gap: 16px;
-  align-content: start;
-}
-
-.inspector-section {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-}
+/* --------------------- 14. checkpoint history (Changes) ---------------- */
 
 .checkpoint-list {
   max-height: 520px;
@@ -2072,35 +2495,10 @@ dt {
 
 /* ---------------------------- 17. responsive --------------------------- */
 
-/* Three flat columns: one hairline divider keeps them legible at full width. */
-@media (min-width: 1281px) {
-  .grid--run > * + * {
-    border-left: 1px solid var(--hairline);
-    padding-left: 22px;
-  }
-}
-
-/* First collapse: the inspector stops being a column, main keeps its width. */
-@media (max-width: 1280px) {
-  .grid--run {
-    grid-template-columns: minmax(170px, 200px) minmax(0, 1fr);
-  }
-
-  .grid--run > .inspector {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  }
-}
-
-/* Second collapse: the rail stacks too. Main is never squeezed. */
+/* The progress reads horizontally at full width and wraps on narrow screens. */
 @media (max-width: 1024px) {
-  .grid--run,
   .grid--split,
   .grid--forms {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .grid--run > .inspector {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -2156,6 +2554,21 @@ dt {
 
   .nav__footer {
     display: none;
+  }
+
+  /* Milestones stack instead of squeezing; activity meta drops to its own row. */
+  .progress__step {
+    flex-basis: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .activity__row {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .activity__row > .faint {
+    grid-column: 1 / -1;
   }
 
   :root {

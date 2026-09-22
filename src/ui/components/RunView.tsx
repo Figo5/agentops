@@ -1,14 +1,20 @@
 /**
- * Run view: stage rail + selected task detail + inspector + log drawer, with the
- * action bar that owns every human decision.
+ * Run view — the mission-control screen for one run.
  *
- * The engine drives execution; this view only submits explicit actions:
- * start, retry (with a mandatory reason), cancel (with a mandatory reason),
- * approval decisions limited to `pendingApproval.allowed`, and operator input.
- * The next instruction a human types is retained across refreshes until it is
- * submitted or cleared.
+ * The page answers, in order: what is this run (project, goal), what is
+ * happening right now (one semantic state), how far along is it (horizontal
+ * Plan · Build · Verify · Review · Final progress), and what does the operator
+ * have to do (one decision sheet with recorded evidence above a single filled
+ * action).
+ *
+ * Everything the old three-column layout exposed is still here, in one of five
+ * main tabs — Overview, Changes, Verification, Review, Activity — with IDs,
+ * raw payloads, prompts and historical attempts kept behind disclosures. The
+ * engine still owns execution; this view only submits explicit actions: start,
+ * retry (with a mandatory reason), cancel (with a mandatory reason), approval
+ * decisions limited to `pendingApproval.allowed`, and operator input.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type {
   ApprovalDecision,
   EventRecord,
@@ -19,7 +25,7 @@ import { useAction, useRunDetail } from "../hooks.js";
 import {
   approvalDecisionOptions,
   approvalEvidenceView,
-  buildStageRail,
+  classNames,
   eventsForRun,
   formatTimestamp,
   isTerminalRun,
@@ -33,8 +39,20 @@ import {
   validateDecision,
   validateRetryForm,
 } from "../view-model.js";
-import { ApprovalPanel } from "./ApprovalPanel.js";
-import { AttemptDetail } from "./AttemptDetail.js";
+import {
+  buildRunMilestones,
+  changedFilesView,
+  decisionFacts,
+  evidenceTabForStage,
+  latestTestsForAttempt,
+  runStateView,
+  runTabs,
+  verificationHistory,
+  type RunMilestoneView,
+  type RunTabId,
+} from "../run-view.js";
+import { ActivityPanel } from "./ActivityPanel.js";
+import { ApprovalPanel, ApprovalEvidenceDetails } from "./ApprovalPanel.js";
 import {
   Button,
   Card,
@@ -45,13 +63,59 @@ import {
   Loading,
   Notice,
   StateLine,
-  StatusMark,
-  StatusPill,
+  TabPanel,
+  Tabs,
   TextArea,
 } from "./Bits.js";
-import { Inspector } from "./Inspector.js";
-import { LogsDrawer } from "./LogsDrawer.js";
-import { StageRail } from "./StageRail.js";
+import { ChangesPanel } from "./ChangesPanel.js";
+import {
+  FailureEvidence,
+  InputRequest,
+  RetryForm,
+  StartRunBlock,
+} from "./DecisionSheet.js";
+import { OverviewPanel } from "./OverviewPanel.js";
+import { ReviewPanel } from "./ReviewPanel.js";
+import { RunProgress } from "./RunProgress.js";
+import { VerificationPanel } from "./VerificationPanel.js";
+
+const RUN_TABS_ID = "run-sections";
+
+const FAILURE_STATUSES = new Set(["FAILED", "INTERRUPTED", "CANCELLED"]);
+
+/**
+ * Explicit evidence navigation: bring the run's tab list to the top of the
+ * viewport, just below the sticky top bar, so the panel the operator asked for
+ * gets the screen instead of hanging below the whole summary. scroll-margin
+ * (not a fixed top offset) is what keeps the list clear of the sticky bar, and
+ * the bar's real height is measured rather than assumed.
+ *
+ * Only ever called from an explicit navigation — a tab click, a keyboard tab
+ * selection or an evidence button. The initial load of a run stays at the top
+ * of the page, so the header is still the first thing an operator sees.
+ */
+function revealRunTabs(): void {
+  if (typeof document === "undefined") return;
+  const list = document.getElementById(RUN_TABS_ID);
+  if (!list || typeof list.scrollIntoView !== "function") return;
+  const bar = document.querySelector<HTMLElement>(".topbar");
+  const offset = bar ? Math.ceil(bar.getBoundingClientRect().height) + 12 : 76;
+  list.style.scrollMarginTop = `${offset}px`;
+  // The panels below the list inherit the same measured offset: an evidence
+  // panel uses it to keep the viewport height the reveal asked for, and the tab
+  // button a keyboard selection focuses uses it for its own scroll-into-view.
+  list
+    .closest<HTMLElement>(".run-view")
+    ?.style.setProperty("--sticky-offset", `${offset}px`);
+  const reduceMotion =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  list.scrollIntoView({
+    block: "start",
+    inline: "nearest",
+    behavior: reduceMotion ? "auto" : "smooth",
+  });
+}
 
 function pickInitialStage(
   stages: readonly StageRecord[],
@@ -95,11 +159,19 @@ export function RunView({
 }) {
   const [version, setVersion] = useState(0);
   const detail = useRunDetail(client, runId, version + streamVersion);
+  const [tab, setTab] = useState<RunTabId>("overview");
+  /**
+   * Bumped by every explicit evidence navigation. The reveal itself runs in an
+   * effect, after the requested panel has been committed: a new tab's content
+   * is what gives the page the room to scroll, so scrolling during the click
+   * would leave the panel below the fold on a compact run.
+   */
+  const [revealRequest, setRevealRequest] = useState(0);
   const [selectedStageKey, setSelectedStageKey] = useState<string | null>(null);
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(
     null,
   );
-  const [logsOpen, setLogsOpen] = useState(true);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [selectedDecision, setSelectedDecision] =
     useState<ApprovalDecision | null>(null);
   const [decisionReason, setDecisionReason] = useState("");
@@ -129,8 +201,10 @@ export function RunView({
 
   // Reset per-run UI state when the selected run changes.
   useEffect(() => {
+    setTab("overview");
     setSelectedStageKey(null);
     setSelectedAttemptId(null);
+    setEvidenceOpen(false);
     setSelectedDecision(null);
     setDecisionReason("");
     setRetryReason("");
@@ -150,26 +224,48 @@ export function RunView({
     );
   }, [detail.data]);
 
+  // Explicit evidence navigation: reveal the tab list in the same commit that
+  // renders the requested panel. A layout effect runs after React has committed
+  // the new panel and before the browser paints, so the page already has the
+  // panel's height and the scroll lands without a visible jump.
+  useLayoutEffect(() => {
+    if (revealRequest === 0) return;
+    revealRunTabs();
+  }, [revealRequest]);
+
   const run = detail.data?.run ?? null;
   const project =
     detail.data?.project ??
     bootstrap.projects.find((candidate) => candidate.id === run?.projectId) ??
     null;
-  const rail = useMemo(() => {
-    if (!detail.data) return null;
-    return buildStageRail(
+
+  const milestones: RunMilestoneView[] = useMemo(() => {
+    if (!detail.data) return [];
+    return buildRunMilestones(
       detail.data.plan,
       detail.data.stages,
-      detail.data.tasks,
       detail.data.agents,
       detail.data.run.nextStageKey,
     );
   }, [detail.data]);
 
-  const selectedStage =
-    detail.data?.stages.find((stage) => stage.key === selectedStageKey) ?? null;
-  const pending = detail.data?.pendingApproval ?? null;
-  const decisions = useMemo(() => approvalDecisionOptions(pending), [pending]);
+  /**
+   * Every verification the run recorded, newest first.
+   *
+   * Declared with the other hooks, above the loading/error returns: a hook must
+   * never sit after a conditional return, or the loaded render has a different
+   * hook order than the loading one (React error 310 on a real run route).
+   */
+  const verification = useMemo(() => {
+    const loaded = detail.data;
+    if (!loaded) return [];
+    return verificationHistory({
+      attempts: loaded.attempts,
+      tests: loaded.tests,
+      commands: loaded.commands,
+      stages: loaded.stages,
+    });
+  }, [detail.data]);
 
   if (detail.error && !detail.data) {
     return (
@@ -190,19 +286,152 @@ export function RunView({
     );
   }
 
+  const data = detail.data;
   const cycle = reviewCycleView(run);
+  const pending = data.pendingApproval;
+  const decisions = approvalDecisionOptions(pending);
   const evidence = approvalEvidenceView({
     approval: pending,
     reviewCycle: cycle,
-    verdicts: detail.data.reviewVerdicts,
-    attempts: detail.data.attempts,
-    tests: detail.data.tests,
-    agents: detail.data.agents,
+    verdicts: data.reviewVerdicts,
+    attempts: data.attempts,
+    tests: data.tests,
+    agents: data.agents,
   });
   const question = pendingInputQuestion({
     events: mergedEvents,
-    attempts: detail.data.attempts,
+    attempts: data.attempts,
   });
+
+  // Built per render rather than memoised: this sits after the loading guards,
+  // so it must not be a hook. The arrays are small (stages, attempts, agents).
+  const activityContext = {
+    stageNames: new Map(data.stages.map((stage) => [stage.key, stage.name])),
+    attemptNumbers: new Map(
+      data.attempts.map((attempt) => [attempt.id, attempt.attemptNumber]),
+    ),
+    agentNames: new Map(data.agents.map((agent) => [agent.id, agent.name])),
+    // An agent event carries no agent id of its own; the attempt it belongs to
+    // names the agent the sentence should use. An attempt whose agent is not
+    // recorded stays unresolved rather than being given a generic name here.
+    attemptAgents: new Map(
+      data.attempts.flatMap((attempt) => {
+        const name = data.agents.find(
+          (agent) => agent.id === attempt.agentId,
+        )?.name;
+        return name ? [[attempt.id, name] as const] : [];
+      }),
+    ),
+  };
+
+  const runningStage =
+    data.stages.find((stage) => stage.status === "RUNNING") ?? null;
+  const waitingStage =
+    data.stages.find(
+      (stage) =>
+        stage.status === "WAITING_APPROVAL" || stage.status === "WAITING_INPUT",
+    ) ?? null;
+  const nextStage =
+    data.stages.find((stage) => stage.key === run.nextStageKey) ?? null;
+  const activeStage = runningStage ?? waitingStage ?? nextStage ?? null;
+  const failedStage =
+    [...data.stages]
+      .filter((stage) => FAILURE_STATUSES.has(stage.status))
+      .sort((a, b) => (b.endedAt ?? "").localeCompare(a.endedAt ?? ""))[0] ??
+    null;
+
+  const activeAttempt =
+    data.attempts.find((attempt) => attempt.id === run.currentAttemptId) ??
+    (activeStage
+      ? ([...data.attempts]
+          .filter((attempt) => attempt.stageKey === activeStage.key)
+          .sort((a, b) => b.attemptNumber - a.attemptNumber)[0] ?? null)
+      : null);
+  const activeAgentName =
+    data.agents.find(
+      (agent) => agent.id === (activeAttempt?.agentId ?? activeStage?.agentId),
+    )?.name ?? null;
+
+  const state = runStateView({
+    status: run.status,
+    gate: pending?.gate ?? null,
+    stage: activeStage,
+    agentName: activeAgentName,
+    failedStageName: failedStage?.name ?? null,
+  });
+
+  // What the run recorded about the work in flight. The header already states
+  // the state itself ("DeepSeek is implementing"), so this is the only line the
+  // Overview adds while a run is active.
+  const activeSummary =
+    run.status === "RUNNING"
+      ? (activeAttempt?.resultSummary ?? activeStage?.summary ?? null)
+      : null;
+
+  const tabs = runTabs({
+    hasChanges: (project?.vcs ?? "none") === "git" || data.snapshots.length > 0,
+    // A tab appears when there is evidence behind it. A planned stage stays
+    // reachable through Workflow details, not as an empty tab.
+    hasVerification:
+      data.tests.length > 0 ||
+      data.commands.length > 0 ||
+      data.attempts.some((attempt) => attempt.verification !== null),
+    hasReview: data.reviewVerdicts.length > 0,
+    counts: {
+      changes: changedFilesView({
+        snapshot:
+          [...data.snapshots].sort((a, b) =>
+            a.capturedAt.localeCompare(b.capturedAt),
+          )[Math.max(0, data.snapshots.length - 1)] ?? null,
+      }).count ?? undefined,
+      review: data.reviewVerdicts.length,
+    },
+  });
+  const hasTab = (id: RunTabId) => tabs.some((entry) => entry.id === id);
+
+  const facts = evidence ? decisionFacts({ evidence, snapshots: data.snapshots }) : [];
+  const testView = evidence?.verification
+    ? latestTestsForAttempt(
+        data.tests,
+        evidence.verification.attemptId,
+        evidence.verification.attemptNumber,
+      )
+    : { rows: [], hidden: 0 };
+
+  const selectedStage =
+    data.stages.find((stage) => stage.key === selectedStageKey) ?? null;
+
+  const canRetry = run.status === "FAILED" || run.status === "INTERRUPTED";
+  const canStart = run.status === "DRAFT";
+  const canCancel = !isTerminalRun(run.status);
+  const isFailure = canRetry && !pending && run.status !== "WAITING_INPUT";
+
+  /**
+   * Explicit evidence navigation: bring the run's tab list to the top of the
+   * viewport, just below the sticky top bar, so the panel the operator asked
+   * for gets the screen instead of hanging below the whole summary. Only ever
+   * called from an explicit navigation — a tab click, a keyboard tab selection
+   * or an evidence button; the initial load of a run stays at the top of the
+   * page so the header is the first thing an operator sees.
+   */
+  const openTab = (id: RunTabId) => {
+    setTab(hasTab(id) ? id : "overview");
+    // Bumped, never set to a tab id: the reveal runs in an effect after the
+    // requested panel has been committed. Scrolling before that render could
+    // not reach the target — the new panel's height is what makes the room.
+    setRevealRequest((current) => current + 1);
+  };
+
+  const selectStage = (key: string, milestone?: RunMilestoneView) => {
+    setSelectedStageKey(key);
+    setSelectedAttemptId(null);
+    setEvidenceOpen(true);
+    const kind =
+      data.stages.find((stage) => stage.key === key)?.kind ??
+      data.plan.stages.find((stage) => stage.key === key)?.kind ??
+      "task";
+    openTab(milestone ? milestone.tab : evidenceTabForStage(kind));
+  };
 
   const submitDecision = async (decision: ApprovalDecision) => {
     const result = validateDecision(decision, decisionReason, decisions);
@@ -256,9 +485,7 @@ export function RunView({
     const updated = await action.run((c) =>
       c.cancelRun(run.id, { reason: result.value.reason }),
     );
-    if (updated) {
-      setCancelReason("");
-    }
+    if (updated) setCancelReason("");
   };
 
   const submitInput = async () => {
@@ -273,361 +500,352 @@ export function RunView({
     if (updated) setOperatorInput("");
   };
 
-  const canRetry = run.status === "FAILED" || run.status === "INTERRUPTED";
-  const canStart = run.status === "DRAFT";
-  const canCancel = !isTerminalRun(run.status);
+  const showsDecision =
+    Boolean(pending && evidence) ||
+    run.status === "WAITING_INPUT" ||
+    canStart ||
+    isFailure;
 
   return (
-    <>
-      <div className="view view--wide">
-        {/* Page header: the goal is the 30px page title, state sits beside it. */}
-        <header className="page-head">
-          <div className="page-head__title">
-            <h1 className="page-title">
-              <ClampedText text={run.goal} />
-            </h1>
-            <StatusMark status={run.status} size="lg" />
-            <div className="page-head__actions">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={reload}
-                disabled={detail.loading}
-              >
-                {detail.loading ? "Refreshing…" : "Refresh"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setLogsOpen((current) => !current)}
-              >
-                {logsOpen ? "Hide logs" : "Show logs"}
-              </Button>
-            </div>
-          </div>
-          {/* The project stays visible; path, id and dates are quiet below. */}
-          <p className="page-head__meta">{project?.name ?? run.projectId}</p>
-        </header>
+    <div className="view view--wide run-view">
+      <header className="run-head">
+        <p className="run-head__crumb">
+          <span>{project?.name ?? run.projectId}</span>
+          <span aria-hidden="true"> · </span>
+          <span title="Local AgentOps server: the client talks only to the same-origin process that served it.">
+            Local
+          </span>
+          <span aria-hidden="true"> · </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={reload}
+            disabled={detail.loading}
+          >
+            {detail.loading ? "Refreshing…" : "Refresh"}
+          </Button>
+        </p>
+        <div className="run-head__title">
+          <h1 className="page-title">
+            <ClampedText text={run.goal} />
+          </h1>
+        </div>
+        <div className="run-head__state">
+          <h2 className={classNames("run-state", `run-state--${state.tone}`)}>
+            {state.headline}
+          </h2>
+          {state.detail ? (
+            <p className="faint small">{state.detail}</p>
+          ) : null}
+        </div>
+      </header>
 
-        {/*
-         * A waiting gate is described by the decision sheet itself, so the
-         * banner is only rendered when there is no decision to show.
-         */}
-        {run.status === "WAITING_APPROVAL" && !pending ? (
-          <StateLine status={run.status} tone="accent">
-            The run is stopped until an operator decides.
-          </StateLine>
-        ) : null}
-        {run.status === "WAITING_INPUT" ? (
-          <StateLine status={run.status} tone="accent">
-            An agent is blocked on operator input. Supply the text below to
-            continue the attempt.
-          </StateLine>
-        ) : null}
-        {run.status === "FAILED" || run.status === "INTERRUPTED" ? (
-          <StateLine status={run.status} tone="danger">
-            {text(
-              run.failureReason ?? run.interruptReason,
-              "no reason recorded",
-            )}
-            . Resuming requires a deliberate retry with a reason.
-          </StateLine>
-        ) : null}
-        {run.status === "DRAFT" ? (
-          <StateLine status={run.status} tone="neutral">
-            This run is persisted but idle. Review the plan below, then start it
-            explicitly.
-          </StateLine>
-        ) : null}
+      <RunProgress
+        milestones={milestones}
+        selectedStageKey={selectedStageKey}
+        onSelectStage={(key, milestone) => selectStage(key, milestone)}
+        onOpenMilestone={(milestone) => openTab(milestone.tab)}
+      />
 
-        {/* The single human decision sheet is the one elevated surface. */}
+      {showsDecision ? (
         <Card
           elevated={Boolean(pending)}
-          title={pending ? undefined : "Run controls"}
+          title={
+            pending
+              ? undefined
+              : run.status === "WAITING_INPUT"
+                ? "Your answer"
+                : canStart
+                  ? "Ready to start"
+                  : undefined
+          }
         >
           <div className="stack">
             {action.error ? <ErrorBox error={action.error} /> : null}
-            {formError ? <ErrorBox error={formError} /> : null}
-            {action.notice ? (
-              <Notice tone="success">{action.notice}</Notice>
-            ) : null}
+          {formError ? <ErrorBox error={formError} /> : null}
+          {action.notice ? (
+            <Notice tone="success">{action.notice}</Notice>
+          ) : null}
 
-            {canStart ? (
-              <div className="row">
-                <Button
-                  variant="primary"
-                  onClick={() => void action.run((c) => c.startRun(run.id))}
-                  disabled={action.pending}
-                >
-                  {action.pending ? "Starting…" : "Start run"}
-                </Button>
-                <span className="faint small">
-                  Launches the entry stage. Human gates still stop the run.
-                </span>
-              </div>
-            ) : null}
+          {pending && evidence ? (
+            <ApprovalPanel
+              evidence={evidence}
+              options={decisions}
+              facts={facts}
+              latestTests={testView.rows}
+              testsHidden={testView.hidden}
+              selected={selectedDecision}
+              reason={decisionReason}
+              busy={action.pending}
+              error={formError}
+              onSelect={setSelectedDecision}
+              onReasonChange={setDecisionReason}
+              onReviewChanges={
+                pending.gate === "final_acceptance" && hasTab("changes")
+                  ? () => openTab("changes")
+                  : undefined
+              }
+              onOpenReview={
+                pending.gate !== "final_acceptance" &&
+                evidence.verdict &&
+                hasTab("review")
+                  ? () => openTab("review")
+                  : undefined
+              }
+              showDetails={false}
+              onCancel={() => {
+                setSelectedDecision(null);
+                setDecisionReason("");
+                setFormError(null);
+              }}
+              onConfirm={(decision) => void submitDecision(decision)}
+            />
+          ) : null}
 
-            {pending && evidence ? (
-              <ApprovalPanel
-                evidence={evidence}
-                options={decisions}
-                selected={selectedDecision}
-                reason={decisionReason}
-                busy={action.pending}
-                error={formError}
-                onSelect={setSelectedDecision}
-                onReasonChange={setDecisionReason}
-                onCancel={() => {
-                  setSelectedDecision(null);
-                  setDecisionReason("");
-                  setFormError(null);
-                }}
-                onConfirm={(decision) => void submitDecision(decision)}
+          {run.status === "WAITING_APPROVAL" && !pending ? (
+            <StateLine status={run.status} tone="accent">
+              This run is stopped until an operator decides, but the gate payload
+              has not loaded yet.
+            </StateLine>
+          ) : null}
+
+          {run.status === "WAITING_INPUT" ? (
+            <InputRequest
+              question={question}
+              stageName={activeStage?.name ?? null}
+              value={operatorInput}
+              onChange={setOperatorInput}
+              onSubmit={() => void submitInput()}
+              busy={action.pending}
+            />
+          ) : null}
+
+          {isFailure ? (
+            <div className="stack">
+              <h2 className="run-sheet__headline">{state.headline}</h2>
+              <FailureEvidence
+                stage={failedStage}
+                reason={run.failureReason ?? run.interruptReason}
+                attempts={data.attempts.length}
               />
-            ) : null}
-
-            {run.status === "WAITING_INPUT" ? (
-              <div className="operator-input">
-                <div className="operator-question stack--tight">
-                  <b>What the agent is asking</b>
-                  {question.text ? (
-                    <p className="wrap-anywhere">{question.text}</p>
-                  ) : (
-                    <p className="faint small">
-                      The agent asked for input but no question text was
-                      persisted. Read the attempt output before answering.
-                    </p>
-                  )}
-                  <p className="faint small wrap-anywhere">
-                    Source:{" "}
-                    {question.source === "input.requested"
-                      ? "persisted input request"
-                      : question.source === "agent.waiting"
-                        ? "agent waiting event"
-                        : question.source === "attempt summary"
-                          ? "waiting attempt summary"
-                          : "nothing recorded"}
-                    {question.attemptNumber !== null
-                      ? ` · attempt #${question.attemptNumber}`
-                      : ""}
-                    {question.stageKey ? ` · stage ${question.stageKey}` : ""}
-                    {question.at ? ` · ${formatTimestamp(question.at)}` : ""}
-                  </p>
-                </div>
-                <div className="stack">
-                  <Field
-                    label="Your answer"
-                    htmlFor="operator-input"
-                    help="Delivered to the waiting attempt as its next input."
-                  >
-                    <TextArea
-                      id="operator-input"
-                      rows={3}
-                      value={operatorInput}
-                      onChange={setOperatorInput}
-                      ariaLabel="Operator input"
-                    />
-                  </Field>
-                  <div>
-                    <Button
-                      variant="primary"
-                      onClick={() => void submitInput()}
-                      disabled={action.pending || !operatorInput.trim()}
-                    >
-                      {action.pending ? "Sending…" : "Send input"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {/* Quiet, secondary run controls: never a loud competitor to the
-                decision above. */}
-            <div className="run-quiet-controls">
-              {canRetry ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowRetry((current) => !current)}
-                >
-                  {showRetry ? "Hide retry form" : "Retry with reason"}
-                </Button>
-              ) : null}
-              {!canCancel ? (
-                <span className="faint small">
-                  This run is terminal and cannot be restarted.
-                </span>
-              ) : null}
-            </div>
-
-            {showRetry && canRetry ? (
-              <div className="run-form">
-                <Field
-                  label="Retry reason (mandatory)"
-                  htmlFor="retry-reason"
-                  help="Stored on the new attempt as its immutable reason."
-                >
-                  <TextArea
-                    id="retry-reason"
-                    rows={2}
-                    value={retryReason}
-                    onChange={setRetryReason}
-                  />
-                </Field>
-                <Field
-                  label="Instruction for the retried attempt (optional)"
-                  htmlFor="retry-instruction"
-                >
-                  <TextArea
-                    id="retry-instruction"
-                    rows={2}
-                    value={retryInstruction}
-                    onChange={setRetryInstruction}
-                  />
-                </Field>
+              {showRetry ? (
+                <RetryForm
+                  reason={retryReason}
+                  instruction={retryInstruction}
+                  onReasonChange={setRetryReason}
+                  onInstructionChange={setRetryInstruction}
+                  onSubmit={() => void submitRetry()}
+                  busy={action.pending}
+                />
+              ) : (
                 <div className="row">
                   <Button
                     variant="primary"
-                    onClick={() => void submitRetry()}
-                    disabled={action.pending || !retryReason.trim()}
+                    onClick={() => setShowRetry(true)}
+                    disabled={action.pending}
                   >
-                    {action.pending ? "Retrying…" : "Create retry attempt"}
+                    Retry with reason
                   </Button>
                   <span className="faint small">
-                    The previous attempt is kept and never overwritten.
+                    Resuming needs a deliberate retry with a reason. The failed
+                    attempt is kept and never overwritten.
                   </span>
                 </div>
-              </div>
-            ) : null}
+              )}
+            </div>
+          ) : null}
 
-            {/* Cancellation is a quiet disclosure, never an always-visible
-                destructive primary competitor to the decision above. */}
-            {canCancel ? (
-              <Disclosure summary="Cancel this run">
-                <Field
-                  label="Cancellation reason (mandatory)"
-                  htmlFor="cancel-reason"
-                  help="Records intent, terminates only the process group AgentOps owns, then records the terminal state."
-                >
-                  <TextArea
-                    id="cancel-reason"
-                    rows={2}
-                    value={cancelReason}
-                    onChange={setCancelReason}
-                  />
-                </Field>
-                <div className="row">
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => void submitCancel()}
-                    disabled={action.pending || !cancelReason.trim()}
-                  >
-                    {action.pending ? "Cancelling…" : "Confirm cancellation"}
-                  </Button>
-                </div>
-              </Disclosure>
-            ) : null}
-          </div>
-        </Card>
-
-        {/* Run metadata and constraints: quiet, one level down. */}
-        <section className="run-details">
-          <Disclosure summary="Run details">
-            <dl className="kv">
-              <dt>Project</dt>
-              <dd>{project?.name ?? run.projectId}</dd>
-              <dt>Repository</dt>
-              <dd className="mono wrap-anywhere">{run.projectRoot}</dd>
-              <dt>Template</dt>
-              <dd>
-                {run.templateId} v{run.templateVersion}
-              </dd>
-              <dt>Review cycle</dt>
-              <dd title={`${cycle.used} fix cycle(s) used of ${cycle.max}`}>
-                {cycle.label}
-                {cycle.used > 0
-                  ? ` · fixes run ${cycle.used}`
-                  : " · no fix cycle"}
-              </dd>
-              <dt>Git policy</dt>
-              <dd>{run.policy.gitPolicy}</dd>
-              <dt>Next stage</dt>
-              <dd>{text(run.nextStageKey, "none")}</dd>
-              <dt>Attempts</dt>
-              <dd>{detail.data.attempts.length}</dd>
-              <dt>Events</dt>
-              <dd>{mergedEvents.length}</dd>
-              <dt>Run id</dt>
-              <dd className="mono wrap-anywhere">{run.id}</dd>
-              <dt>Created</dt>
-              <dd>
-                {formatTimestamp(run.createdAt)} · updated{" "}
-                {relativeTime(run.updatedAt)}
-              </dd>
-              <dt>Constraints</dt>
-              <dd>
-                {run.constraints.length > 0 ? (
-                  <ul
-                    className="stack--tight"
-                    style={{ margin: 0, paddingLeft: 18 }}
-                  >
-                    {run.constraints.map((constraint) => (
-                      <li key={constraint}>{constraint}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  "No constraints recorded for this run."
-                )}
-              </dd>
-            </dl>
-          </Disclosure>
-        </section>
-
-        <div className="grid grid--run">
-          {rail ? (
-            <StageRail
-              rail={rail}
-              runStatus={run.status}
-              selectedKey={selectedStageKey}
-              onSelect={(key) => {
-                setSelectedStageKey(key);
-                setSelectedAttemptId(null);
-              }}
+          {canStart ? (
+            <StartRunBlock
+              onStart={() => void action.run((c) => c.startRun(run.id))}
+              busy={action.pending}
             />
           ) : null}
-          <AttemptDetail
-            detail={detail.data}
-            stage={selectedStage}
+          </div>
+        </Card>
+      ) : null}
+
+      <Tabs
+        idBase={RUN_TABS_ID}
+        // The tab list carries the run-sections id so explicit navigation can
+        // scroll it (and the selected panel below it) to the top of the page.
+        id={RUN_TABS_ID}
+        label="Run sections"
+        active={tab}
+        onChange={(id) => openTab(id as RunTabId)}
+        tabs={tabs}
+      />
+
+      <TabPanel idBase={RUN_TABS_ID} id="overview" selected={tab === "overview"}>
+        {tab === "overview" ? (
+          <OverviewPanel
+            client={client}
+            detail={data}
+            events={mergedEvents}
+            activityContext={activityContext}
+            activeSummary={activeSummary}
+            showOutcome={run.status === "COMPLETED" && !showsDecision}
+            selectedStage={selectedStage}
+            selectedStageKey={selectedStageKey}
             selectedAttemptId={selectedAttemptId}
             onSelectAttempt={setSelectedAttemptId}
-          />
-          <Inspector
-            client={client}
-            detail={detail.data}
+            onSelectStage={(key) => selectStage(key)}
+            onOpenTab={openTab}
+            evidenceOpen={evidenceOpen}
+            onEvidenceOpen={setEvidenceOpen}
             refreshDetail={refreshAll}
           />
-        </div>
+        ) : null}
+      </TabPanel>
+      {/* The four evidence panels are the ones explicit navigation opens: each
+          keeps the viewport height it was opened for, so a short panel — or one
+          whose diff is still loading — still gives the page the room the reveal
+          needs. Overview keeps its natural height: it is the top of the page. */}
+      <TabPanel
+        idBase={RUN_TABS_ID}
+        id="changes"
+        selected={tab === "changes"}
+        className="run-evidence"
+      >
+        {tab === "changes" ? (
+          <ChangesPanel client={client} detail={data} />
+        ) : null}
+      </TabPanel>
+      <TabPanel
+        idBase={RUN_TABS_ID}
+        id="verification"
+        selected={tab === "verification"}
+        className="run-evidence"
+      >
+        {tab === "verification" ? <VerificationPanel detail={data} /> : null}
+      </TabPanel>
+      <TabPanel
+        idBase={RUN_TABS_ID}
+        id="review"
+        selected={tab === "review"}
+        className="run-evidence"
+      >
+        {tab === "review" ? <ReviewPanel detail={data} /> : null}
+      </TabPanel>
+      <TabPanel
+        idBase={RUN_TABS_ID}
+        id="activity"
+        selected={tab === "activity"}
+        className="run-evidence"
+      >
+        {tab === "activity" ? (
+          <ActivityPanel
+            events={mergedEvents}
+            streamStatus={streamStatus}
+            stages={data.stages}
+            tasks={data.tasks}
+            agents={data.agents}
+            attempts={data.attempts.map((attempt) => ({
+              id: attempt.id,
+              attemptNumber: attempt.attemptNumber,
+              stageKey: attempt.stageKey,
+              agentId: attempt.agentId,
+            }))}
+            error={detail.error}
+            onReload={reload}
+          />
+        ) : null}
+      </TabPanel>
 
-        <ErrorBox error={detail.error} onRetry={() => void detail.reload()} />
-      </div>
+      <Disclosure summary="Technical details">
+        {pending && evidence ? (
+          <ApprovalEvidenceDetails
+            evidence={evidence}
+            options={decisions}
+            facts={facts}
+            latestTests={testView.rows}
+            testsHidden={testView.hidden}
+          />
+        ) : null}
+        {canCancel ? (
+          <div className="stack">
+            <span className="faint small">Stop this run</span>
+            <Field
+              label="Cancellation reason (mandatory)"
+              htmlFor="cancel-reason"
+              help="Records intent, terminates only the process group AgentOps owns, then records the terminal state."
+            >
+              <TextArea
+                id="cancel-reason"
+                rows={2}
+                value={cancelReason}
+                onChange={setCancelReason}
+              />
+            </Field>
+            <div className="row">
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => void submitCancel()}
+                disabled={action.pending || !cancelReason.trim()}
+              >
+                {action.pending ? "Cancelling…" : "Confirm cancellation"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="faint small">
+            This run is terminal and cannot be restarted.
+          </p>
+        )}
+        <dl className="kv">
+          <dt>Project</dt>
+          <dd>{project?.name ?? run.projectId}</dd>
+          <dt>Repository</dt>
+          <dd className="mono wrap-anywhere">{run.projectRoot}</dd>
+          <dt>Template</dt>
+          <dd>
+            {run.templateId} v{run.templateVersion}
+          </dd>
+          <dt>Persisted status</dt>
+          <dd>
+            {statusLabel(run.status)}{" "}
+            <span className="mono small">({run.status})</span>
+          </dd>
+          {pending ? (
+            <>
+              <dt>Approval gate key</dt>
+              <dd className="mono">{pending.gate}</dd>
+            </>
+          ) : null}
+          <dt>Review cycle</dt>
+          <dd>{cycle.label}</dd>
+          <dt>Git policy</dt>
+          <dd>{run.policy.gitPolicy}</dd>
+          <dt>Next stage</dt>
+          <dd className="mono">{text(run.nextStageKey, "none")}</dd>
+          <dt>Attempts</dt>
+          <dd>{data.attempts.length}</dd>
+          <dt>Events</dt>
+          <dd>{mergedEvents.length}</dd>
+          <dt>Run id</dt>
+          <dd className="mono wrap-anywhere">{run.id}</dd>
+          <dt>Created</dt>
+          <dd>
+            {formatTimestamp(run.createdAt)} · updated{" "}
+            {relativeTime(run.updatedAt)}
+          </dd>
+          <dt>Constraints</dt>
+          <dd>
+            {run.constraints.length > 0 ? (
+              <ul className="stack--tight" style={{ margin: 0, paddingLeft: 18 }}>
+                {run.constraints.map((constraint) => (
+                  <li key={constraint}>{constraint}</li>
+                ))}
+              </ul>
+            ) : (
+              "No constraints recorded for this run."
+            )}
+          </dd>
+        </dl>
+      </Disclosure>
 
-      {logsOpen ? (
-        <LogsDrawer
-          events={mergedEvents}
-          streamStatus={streamStatus}
-          stages={detail.data.stages}
-          tasks={detail.data.tasks}
-          agents={detail.data.agents}
-          attempts={detail.data.attempts.map((attempt) => ({
-            id: attempt.id,
-            attemptNumber: attempt.attemptNumber,
-            stageKey: attempt.stageKey,
-          }))}
-          error={detail.error}
-          onReload={reload}
-        />
-      ) : null}
-    </>
+      <ErrorBox error={detail.error} onRetry={() => void detail.reload()} />
+    </div>
   );
 }

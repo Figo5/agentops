@@ -107,14 +107,25 @@ export function Disclosure({
   children,
   className,
   open = false,
+  onToggle,
 }: {
   summary: ReactNode;
   children: ReactNode;
   className?: string;
   open?: boolean;
+  /** Lets a parent drive the disclosure (used when a stage click must open it). */
+  onToggle?: (open: boolean) => void;
 }) {
   return (
-    <details className={classNames("disclosure", className)} open={open}>
+    <details
+      className={classNames("disclosure", className)}
+      open={open}
+      onToggle={
+        onToggle
+          ? (event) => onToggle(event.currentTarget.open)
+          : undefined
+      }
+    >
       <summary>{summary}</summary>
       <div className="disclosure__body">{children}</div>
     </details>
@@ -569,6 +580,7 @@ export function Tabs({
   onChange,
   label,
   idBase,
+  id,
 }: {
   tabs: { id: string; label: string; count?: number }[];
   active: string;
@@ -576,6 +588,11 @@ export function Tabs({
   label: string;
   /** Id prefix shared with the matching TabPanels (required, never ad hoc). */
   idBase: string;
+  /**
+   * Optional id for the tab list itself, so a caller can scroll the list (and
+   * the panel under it) into view when the operator explicitly opens a tab.
+   */
+  id?: string;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -615,6 +632,7 @@ export function Tabs({
   return (
     <div
       className="tabs"
+      id={id}
       role="tablist"
       aria-label={label}
       ref={listRef}

@@ -33,7 +33,7 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
 
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.status, 0, `render harness failed:\n${output}`);
-  assert.match(output, /11\/11 render checks passed/);
+  assert.match(output, /20\/20 render checks passed/);
   assert.match(output, /ok - first-run empty state offers one useful action/);
   assert.match(
     output,
@@ -56,4 +56,41 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
     /ok - approval evidence precedes the decision buttons and gates the reason/,
   );
   assert.match(output, /ok - the final acceptance gate offers Accept run/);
+  // Pass 3 run-screen behaviour.
+  assert.match(
+    output,
+    /ok - stage progress is compact and its chronology is folded/,
+  );
+  assert.match(
+    output,
+    /ok - the run state headline is the semantic sentence, not the enum/,
+  );
+  assert.match(
+    output,
+    /ok - activity lists lifecycle sentences, not output frames/,
+  );
+  assert.match(
+    output,
+    /ok - verification leads with command rows and folds the raw output/,
+  );
+  assert.match(
+    output,
+    /ok - a passed command with unparsed counts still reads as passed/,
+  );
+  assert.match(
+    output,
+    /ok - review leads with reviewer and findings, prose one level down/,
+  );
+  assert.match(
+    output,
+    /ok - overview keeps the outcome, the audit and the run's assets/,
+  );
+  assert.match(
+    output,
+    /ok - overview leads with recent activity and leaves the live state to the header/,
+  );
+  assert.match(
+    output,
+    /ok - the operator input gate asks the question next to the answer/,
+  );
 });

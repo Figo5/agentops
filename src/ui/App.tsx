@@ -300,14 +300,6 @@ export function App() {
             </span>
           </div>
           <div className="topbar__spacer" />
-          {runId ? (
-            <span className="faint small">
-              stream {stream.status}
-              {stream.status === "unsupported"
-                ? " (EventSource unavailable in this browser)"
-                : ""}
-            </span>
-          ) : null}
           <Button
             size="sm"
             variant="ghost"
@@ -413,7 +405,8 @@ function titleFor(route: Route): string {
 function subtitleFor(route: Route, runCount: number): string {
   if (route.view === "runs")
     return "persisted search across projects, agents, status, dates, branch and verdict";
-  if (route.view === "run") return route.runId;
+  /* A run's own screen shows its project, goal and state: never a raw id here. */
+  if (route.view === "run") return "";
   if (route.view === "home") return `${runCount} run(s) on record`;
   return "";
 }
