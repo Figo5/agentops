@@ -21,11 +21,14 @@ import {
   EMPTY_AGENT_FORM,
   EMPTY_PROJECT_FORM,
   EMPTY_RUN_SEARCH,
+  TEST_COUNT_UNAVAILABLE,
   UNKNOWN,
   agentStateLabel,
   agentToForm,
   approvalDecisionOptions,
+  approvalEvidenceView,
   artifactView,
+  attemptCountsView,
   buildRunSearchParams,
   buildStageRail,
   categoryCounts,
@@ -35,6 +38,7 @@ import {
   eventMessage,
   eventsForRun,
   filterEvents,
+  fixLoopCycleLabel,
   formatBytes,
   formatCount,
   formatDuration,
@@ -44,11 +48,15 @@ import {
   parseArgsJson,
   parseDiffStats,
   parseRoute,
+  pendingInputQuestion,
   planRoleOptions,
   planRows,
   projectAllowedAdapters,
   projectPathHint,
   promptComparisons,
+  reviewerIdentity,
+  reviewerName,
+  reviewCycleView,
   routeHref,
   runMatchesSearch,
   serializeQuery,
@@ -67,6 +75,8 @@ import {
   validateRetryForm,
   verdictLabel,
   verdictTone,
+  verificationCountsLabel,
+  verificationLabel,
 } from "../src/ui/view-model.js";
 
 /* ------------------------------- fixtures ------------------------------ */
@@ -574,7 +584,7 @@ test("test counts are only reported when parsed confidently", () => {
   };
   assert.match(
     testCountsLabel(unparsed),
-    /UNKNOWN \(counts not parsed confidently\)/,
+    /Test count unavailable \(counts not parsed confidently\)/,
   );
   assert.equal(
     testCountsLabel({
@@ -597,6 +607,89 @@ test("command display quotes arguments and never builds a shell string", () => {
   );
   assert.equal(shellQuoteArgument("plain"), "plain");
   assert.equal(shellQuoteArgument("it's"), `'it'\\''s'`);
+});
+
+test("a passed command with unparsed counts still reads as passed", () => {
+  assert.equal(TEST_COUNT_UNAVAILABLE, "Test count unavailable");
+  assert.equal(
+    verificationLabel({
+      status: "passed",
+      summary: "command exited 0",
+      counts: null,
+    }),
+    "Command passed · Test count unavailable",
+  );
+  assert.equal(
+    verificationLabel({
+      status: "failed",
+      summary: "command exited 1",
+      counts: null,
+    }),
+    "Command failed · Test count unavailable",
+  );
+  assert.equal(
+    verificationLabel({
+      status: "passed",
+      summary: "7 tests",
+      counts: { passed: 7, failed: 0, skipped: 0, total: 7 },
+    }),
+    "Command passed · 7/7 passed",
+  );
+  assert.equal(
+    verificationLabel({
+      status: "unavailable",
+      summary: "no commands configured",
+      counts: null,
+    }),
+    "verification unavailable · no commands configured",
+  );
+  assert.equal(verificationLabel(null), `verification ${UNKNOWN}`);
+  assert.equal(verificationCountsLabel(null), TEST_COUNT_UNAVAILABLE);
+  assert.equal(
+    verificationCountsLabel({ passed: 12, failed: 1, total: 13 }),
+    "12 passed / 1 failed / 13 total",
+  );
+});
+
+/* --------------------- review cycle and reviewer identity --------------- */
+
+test("the run review counter matches the rail's fix-cycle numbering", () => {
+  // A fresh run is on review pass 1; the store seeds review_cycle = 1.
+  const fresh = reviewCycleView({
+    reviewCycle: 1,
+    policy: { maxReviewCycles: 2 },
+  });
+  assert.equal(fresh.cycle, 1);
+  assert.equal(fresh.used, 0);
+  assert.equal(fresh.exhausted, false);
+  assert.equal(fresh.label, "review cycle 1 of 2");
+
+  // After the first fix loop the run is on pass 2 while exactly one fix cycle
+  // ran — the rail's loop counter and `used` therefore agree.
+  const afterFixes = reviewCycleView({
+    reviewCycle: 2,
+    policy: { maxReviewCycles: 2 },
+  });
+  assert.equal(afterFixes.cycle, 2);
+  assert.equal(afterFixes.used, 1);
+  assert.equal(afterFixes.exhausted, true);
+  assert.equal(afterFixes.label, "review cycle 2 of 2");
+  assert.equal(fixLoopCycleLabel(1, 2), "fixes from review cycle 1 of 2");
+  assert.equal(fixLoopCycleLabel(0, 2), "no fix cycle has run yet (max 2)");
+  // Out-of-range values are clamped rather than shown as a contradiction.
+  assert.equal(
+    reviewCycleView({ reviewCycle: 7, policy: { maxReviewCycles: 2 } }).cycle,
+    2,
+  );
+});
+
+test("reviewer identity resolves to a plain name and never invents one", () => {
+  const agents = [{ id: "agt_7d58", name: "Claude Opus 4.8" }];
+  assert.equal(reviewerName("agt_7d58", agents), "Claude Opus 4.8");
+  assert.equal(reviewerName("Claude Opus 4.8", agents), "Claude Opus 4.8");
+  assert.equal(reviewerName(null, agents), "reviewer not recorded");
+  assert.equal(reviewerName("   ", agents), "reviewer not recorded");
+  assert.equal(reviewerName(undefined), "reviewer not recorded");
 });
 
 /* ------------------------------ search/home ---------------------------- */
@@ -1052,6 +1145,15 @@ test("approval decisions follow the server allow-list and demand instructions", 
   );
   assert.equal(options[0]!.requiresInstruction, false);
   assert.equal(options[1]!.requiresInstruction, true);
+  // The final human gate reads as an explicit acceptance, not a generic
+  // "approve".
+  assert.equal(options[0]!.label, "Accept run");
+  assert.match(options[0]!.detail, /final human gate/);
+  // Only reason-requiring decisions carry reason copy.
+  assert.equal(options[0]!.reasonLabel, null);
+  assert.equal(options[0]!.reasonHelp, null);
+  assert.equal(options[1]!.reasonLabel, "Reason for rejecting");
+  assert.match(options[1]!.reasonHelp!, /Mandatory/);
 
   const rejectGate = approvalDecisionOptions({
     ...finalGate,
@@ -1062,13 +1164,24 @@ test("approval decisions follow the server allow-list and demand instructions", 
     rejectGate.map((option) => option.decision),
     ["retry", "override", "reject"],
   );
-  assert.match(
-    rejectGate.find((option) => option.decision === "override")!.label,
-    /override/i,
+  const override = rejectGate.find((option) => option.decision === "override")!;
+  assert.equal(override.label, "Override rejection and continue");
+  assert.match(override.detail, /cannot skip final verification/);
+  assert.equal(override.requiresInstruction, true);
+  assert.equal(override.reasonLabel, "Reason for overriding the rejection");
+  assert.match(override.reasonHelp!, /Mandatory/);
+  assert.ok(
+    !rejectGate.some((option) => /Reject with override/.test(option.label)),
+    "the contradictory 'Reject with override' copy is gone",
   );
-  assert.match(
-    rejectGate.find((option) => option.decision === "override")!.detail,
-    /cannot skip final verification/,
+  // A non-final gate keeps the plain approve wording.
+  assert.equal(
+    approvalDecisionOptions({
+      ...finalGate,
+      gate: "review_reject",
+      allowed: ["approve", "reject"],
+    })[0]!.label,
+    "Approve",
   );
 
   assert.equal(validateDecision("approve", "", options).ok, true);
@@ -1077,6 +1190,548 @@ test("approval decisions follow the server allow-list and demand instructions", 
   assert.ok(rejected.ok === false && rejected.errors["instruction"]);
   assert.equal(validateDecision("override", "take it", options).ok, false);
   assert.equal(approvalDecisionOptions(null).length, 0);
+});
+
+test("approval evidence is read from the persisted record", () => {
+  const evidence = approvalEvidenceView({
+    approval: {
+      gate: "review_reject",
+      reason: "reviewer rejected the work: human decision required",
+      stageKey: "review",
+    },
+    reviewCycle: reviewCycleView({
+      reviewCycle: 2,
+      policy: { maxReviewCycles: 2 },
+    }),
+    verdicts: [
+      {
+        id: "rev-1",
+        runId: "run-1",
+        taskId: "task-review",
+        attemptId: "attempt-1",
+        stageKey: "review",
+        cycle: 1,
+        valid: true,
+        validationErrors: [],
+        verdict: "REJECT",
+        summary: "the parser drops empty input",
+        issues: [
+          {
+            severity: "blocking",
+            description: "empty input throws",
+            path: "src/parser.ts",
+            line: 42,
+          },
+        ],
+        confidence: 0.4,
+        reviewer: null,
+        raw: "{}",
+        createdAt: "2026-09-22T11:00:00.000Z",
+      },
+    ],
+    attempts: [
+      {
+        id: "attempt-1",
+        attemptNumber: 1,
+        stageKey: "review",
+        agentId: "agt_reviewer",
+        reviewVerdictId: "rev-1",
+        verification: {
+          status: "passed",
+          mode: "commands",
+          commandCount: 1,
+          counts: null,
+          summary: "1 command exited 0",
+          reason: null,
+        },
+      },
+    ],
+    tests: [
+      {
+        attemptId: "attempt-1",
+        framework: "node:test",
+        passed: 7,
+        failed: 0,
+        skipped: 0,
+        total: 7,
+        parsedConfidently: true,
+        createdAt: "2026-09-22T11:00:01.000Z",
+      },
+    ],
+    agents: [{ id: "agt_reviewer", name: "Claude Opus 4.8" }],
+  })!;
+  assert.equal(evidence.gateLabel, "Review rejected — human decision required");
+  assert.equal(evidence.stageKey, "review");
+  assert.equal(evidence.cycle.label, "review cycle 2 of 2");
+  assert.equal(evidence.verdict!.label, "REJECT");
+  assert.equal(evidence.verdict!.tone, "danger");
+  assert.equal(evidence.verdict!.stageKey, "review");
+  // The real payloads omit `reviewer`, but the verdict records the attempt that
+  // produced it — that recorded relationship names the reviewer.
+  assert.equal(evidence.verdict!.reviewer, "Claude Opus 4.8");
+  assert.equal(evidence.verdict!.reviewerSource, "reviewer attempt agent");
+  assert.equal(evidence.verdict!.issues[0]!.location, "src/parser.ts:42");
+  // The persisted verification has counts: null, while the normalized test run
+  // for the same attempt was parsed confidently: the counts are used, never
+  // invented, and the source is reported.
+  assert.equal(evidence.verification!.label, "Command passed · 7/7 passed");
+  assert.equal(evidence.verification!.countsSource, "normalized test run");
+  assert.equal(evidence.verification!.framework, "node:test");
+  assert.equal(evidence.verification!.attemptNumber, 1);
+  assert.equal(evidence.verification!.stageKey, "review");
+  assert.equal(evidence.verification!.onGateStage, true);
+
+  // Without a confidently parsed row for that attempt the counts stay absent.
+  const unparsed = approvalEvidenceView({
+    approval: {
+      gate: "review_reject",
+      reason: null,
+      stageKey: "review",
+    },
+    reviewCycle: reviewCycleView({
+      reviewCycle: 1,
+      policy: { maxReviewCycles: 2 },
+    }),
+    verdicts: [],
+    attempts: [
+      {
+        id: "attempt-1",
+        attemptNumber: 1,
+        stageKey: "review",
+        agentId: "agt_reviewer",
+        reviewVerdictId: null,
+        verification: {
+          status: "passed",
+          mode: "commands",
+          commandCount: 1,
+          counts: null,
+          summary: "1 command exited 0",
+          reason: null,
+        },
+      },
+    ],
+    tests: [
+      {
+        attemptId: "attempt-1",
+        framework: "node:test",
+        passed: null,
+        failed: null,
+        skipped: null,
+        total: null,
+        parsedConfidently: false,
+        createdAt: "2026-09-22T11:00:01.000Z",
+      },
+    ],
+  })!;
+  assert.equal(
+    unparsed.verification!.label,
+    "Command passed · Test count unavailable",
+  );
+  assert.equal(unparsed.verification!.countsSource, "none");
+  assert.equal(unparsed.verdict, null);
+
+  // The final acceptance gate is opened by the human stage itself: the evidence
+  // falls back to the last verification the run recorded and says where it came
+  // from instead of claiming there is none.
+  const finalEvidence = approvalEvidenceView({
+    approval: { gate: "final_acceptance", reason: null, stageKey: "final" },
+    reviewCycle: reviewCycleView({
+      reviewCycle: 1,
+      policy: { maxReviewCycles: 2 },
+    }),
+    verdicts: [],
+    attempts: [
+      {
+        id: "attempt-2",
+        attemptNumber: 1,
+        stageKey: "final_verify",
+        agentId: null,
+        reviewVerdictId: null,
+        verification: {
+          status: "passed",
+          mode: "commands",
+          commandCount: 1,
+          counts: null,
+          summary: "1 command exited 0",
+          reason: null,
+        },
+      },
+    ],
+    tests: [
+      {
+        attemptId: "attempt-2",
+        framework: "node:test",
+        passed: 7,
+        failed: 0,
+        skipped: 0,
+        total: 7,
+        parsedConfidently: true,
+        createdAt: "2026-09-22T12:00:00.000Z",
+      },
+      // A stale row for a different attempt must never be counted.
+      {
+        attemptId: "attempt-1",
+        framework: "node:test",
+        passed: 3,
+        failed: 1,
+        skipped: 0,
+        total: 4,
+        parsedConfidently: true,
+        createdAt: "2026-09-22T11:00:00.000Z",
+      },
+    ],
+  })!;
+  assert.equal(finalEvidence.verdict, null);
+  assert.equal(finalEvidence.verification!.stageKey, "final_verify");
+  assert.equal(finalEvidence.verification!.onGateStage, false);
+  assert.equal(
+    finalEvidence.verification!.label,
+    "Command passed · 7/7 passed",
+  );
+  assert.equal(finalEvidence.verification!.countsSource, "normalized test run");
+
+  // No approval record means no evidence block at all.
+  assert.equal(
+    approvalEvidenceView({
+      approval: null,
+      reviewCycle: reviewCycleView({
+        reviewCycle: 1,
+        policy: { maxReviewCycles: 2 },
+      }),
+      verdicts: [],
+      attempts: [],
+    }),
+    null,
+  );
+});
+
+test("the operator input gate shows the agent's own question", () => {
+  const requested = pendingInputQuestion({
+    events: [
+      {
+        id: 1,
+        projectId: "project-1",
+        runId: "run-1",
+        taskId: "task-implement",
+        attemptId: "attempt-1",
+        stageKey: "implement",
+        category: "input",
+        type: "input.requested",
+        actor: "agent",
+        payload: { summary: "Which environment should I target?" },
+        createdAt: "2026-09-22T10:00:00.000Z",
+      },
+    ],
+    attempts: [
+      {
+        id: "attempt-1",
+        attemptNumber: 1,
+        stageKey: "implement",
+        status: "WAITING_INPUT",
+        resultSummary: "waiting for operator input",
+      },
+    ],
+  });
+  assert.equal(requested.text, "Which environment should I target?");
+  assert.equal(requested.source, "input.requested");
+  assert.equal(requested.attemptNumber, 1);
+  assert.equal(requested.stageKey, "implement");
+
+  const waitingEvent = pendingInputQuestion({
+    events: [
+      {
+        id: 2,
+        projectId: null,
+        runId: "run-1",
+        taskId: null,
+        attemptId: "attempt-2",
+        stageKey: "implement",
+        category: "agent",
+        type: "agent.waiting",
+        actor: "agent",
+        payload: { message: "Should I overwrite the fixture?" },
+        createdAt: "2026-09-22T10:05:00.000Z",
+      },
+    ],
+    attempts: [
+      {
+        id: "attempt-2",
+        attemptNumber: 2,
+        stageKey: "implement",
+        status: "WAITING_INPUT",
+        resultSummary: "waiting",
+      },
+    ],
+  });
+  assert.equal(waitingEvent.text, "Should I overwrite the fixture?");
+  assert.equal(waitingEvent.source, "agent.waiting");
+
+  // The agent's own waiting message wins over the engine's wrapper summary, and
+  // the question is scoped to the attempt that is actually waiting: attempt 1's
+  // stale question must never be shown for attempt 2.
+  const scopedToWaitingAttempt = pendingInputQuestion({
+    events: [
+      {
+        id: 3,
+        projectId: "project-1",
+        runId: "run-1",
+        taskId: "task-implement",
+        attemptId: "attempt-1",
+        stageKey: "implement",
+        category: "input",
+        type: "input.requested",
+        actor: "agent",
+        payload: {
+          summary:
+            "mock agent is waiting for operator input: Which environment should I target?",
+        },
+        createdAt: "2026-09-22T10:00:00.000Z",
+      },
+      {
+        id: 4,
+        projectId: "project-1",
+        runId: "run-1",
+        taskId: "task-implement",
+        attemptId: "attempt-1",
+        stageKey: "implement",
+        category: "agent",
+        type: "agent.waiting",
+        actor: "agent",
+        payload: { message: "Which environment should I target?" },
+        createdAt: "2026-09-22T10:00:01.000Z",
+      },
+      {
+        id: 5,
+        projectId: "project-1",
+        runId: "run-1",
+        taskId: "task-implement",
+        attemptId: "attempt-2",
+        stageKey: "implement",
+        category: "agent",
+        type: "agent.waiting",
+        actor: "agent",
+        payload: { message: "Should I keep the retry history?" },
+        createdAt: "2026-09-22T10:10:00.000Z",
+      },
+      {
+        id: 6,
+        projectId: "project-1",
+        runId: "run-1",
+        taskId: "task-implement",
+        attemptId: "attempt-2",
+        stageKey: "implement",
+        category: "input",
+        type: "input.requested",
+        actor: "agent",
+        payload: {
+          summary:
+            "mock agent is waiting for operator input: Should I keep the retry history?",
+        },
+        createdAt: "2026-09-22T10:10:01.000Z",
+      },
+    ],
+    attempts: [
+      {
+        id: "attempt-1",
+        attemptNumber: 1,
+        stageKey: "implement",
+        status: "COMPLETED",
+        resultSummary: "attempt 1 finished",
+      },
+      {
+        id: "attempt-2",
+        attemptNumber: 2,
+        stageKey: "implement",
+        status: "WAITING_INPUT",
+        resultSummary: "waiting",
+      },
+    ],
+  });
+  assert.equal(scopedToWaitingAttempt.text, "Should I keep the retry history?");
+  assert.equal(scopedToWaitingAttempt.source, "agent.waiting");
+  assert.equal(scopedToWaitingAttempt.attemptNumber, 2);
+  assert.equal(scopedToWaitingAttempt.stageKey, "implement");
+
+  // With no waiting attempt, the newest persisted input request is still shown
+  // with the attempt that produced it (an already-answered gate).
+  const answered = pendingInputQuestion({
+    events: [
+      {
+        id: 7,
+        projectId: "project-1",
+        runId: "run-1",
+        taskId: "task-implement",
+        attemptId: "attempt-1",
+        stageKey: "implement",
+        category: "input",
+        type: "input.requested",
+        actor: "agent",
+        payload: { summary: "Which environment should I target?" },
+        createdAt: "2026-09-22T10:00:00.000Z",
+      },
+    ],
+    attempts: [
+      {
+        id: "attempt-1",
+        attemptNumber: 1,
+        stageKey: "implement",
+        status: "COMPLETED",
+        resultSummary: "attempt 1 finished",
+      },
+    ],
+  });
+  assert.equal(answered.text, "Which environment should I target?");
+  assert.equal(answered.attemptNumber, 1);
+
+  const fromSummary = pendingInputQuestion({
+    events: [],
+    attempts: [
+      {
+        id: "attempt-1",
+        attemptNumber: 1,
+        stageKey: "implement",
+        status: "WAITING_INPUT",
+        resultSummary: "mock agent is waiting for operator input: pick a port",
+      },
+    ],
+  });
+  assert.equal(
+    fromSummary.text,
+    "mock agent is waiting for operator input: pick a port",
+  );
+  assert.equal(fromSummary.source, "attempt summary");
+
+  const nothing = pendingInputQuestion({ events: [], attempts: [] });
+  assert.equal(nothing.text, "");
+  assert.equal(nothing.source, "none");
+});
+
+test("reviewer identity resolves through the recorded verdict attempt", () => {
+  const agents = [{ id: "agt_7d58", name: "Claude Opus 4.8" }];
+  const attempts = [{ id: "attempt-9", agentId: "agt_7d58" }];
+  // Real payload: no reviewer string, but the verdict records its attempt.
+  assert.deepEqual(
+    reviewerIdentity({
+      reviewer: null,
+      attemptId: "attempt-9",
+      attempts,
+      agents,
+    }),
+    {
+      name: "Claude Opus 4.8",
+      source: "reviewer attempt agent",
+      agentId: "agt_7d58",
+    },
+  );
+  // The verdict field wins when it is present and resolves.
+  assert.deepEqual(
+    reviewerIdentity({
+      reviewer: "agt_7d58",
+      attemptId: "attempt-9",
+      attempts,
+      agents,
+    }),
+    { name: "Claude Opus 4.8", source: "verdict field", agentId: "agt_7d58" },
+  );
+  // An unresolvable field is shown verbatim, never replaced.
+  assert.deepEqual(
+    reviewerIdentity({ reviewer: "Claude Opus 4.8", attempts, agents }),
+    { name: "Claude Opus 4.8", source: "verdict field", agentId: null },
+  );
+  // An attempt whose agent is unknown still names the recorded agent id.
+  assert.deepEqual(
+    reviewerIdentity({
+      attemptId: "attempt-9",
+      attempts: [{ id: "attempt-9", agentId: "agt_missing" }],
+      agents,
+    }),
+    {
+      name: "agt_missing",
+      source: "reviewer attempt agent",
+      agentId: "agt_missing",
+    },
+  );
+  // Nothing recorded stays explicitly absent.
+  assert.deepEqual(
+    reviewerIdentity({ attemptId: "attempt-1", attempts, agents }),
+    {
+      name: "reviewer not recorded",
+      source: "none",
+      agentId: null,
+    },
+  );
+});
+
+test("attempt counts prefer the record and fall back to the normalized test run", () => {
+  const verification = {
+    status: "passed" as const,
+    mode: "commands",
+    commandCount: 1,
+    counts: null,
+    summary: "1 command exited 0",
+    reason: null,
+  };
+  const tests = [
+    {
+      attemptId: "attempt-1",
+      framework: "node:test",
+      passed: 7,
+      failed: 0,
+      skipped: 0,
+      total: 7,
+      parsedConfidently: true,
+      createdAt: "2026-09-22T11:00:00.000Z",
+    },
+    {
+      attemptId: "attempt-2",
+      framework: "vitest",
+      passed: 9,
+      failed: 1,
+      skipped: 0,
+      total: 10,
+      parsedConfidently: true,
+      createdAt: "2026-09-22T12:00:00.000Z",
+    },
+  ];
+  const fromTests = attemptCountsView({
+    attemptId: "attempt-1",
+    verification,
+    tests,
+  });
+  assert.deepEqual(fromTests.counts, {
+    passed: 7,
+    failed: 0,
+    skipped: 0,
+    total: 7,
+  });
+  assert.equal(fromTests.source, "normalized test run");
+  assert.equal(fromTests.framework, "node:test");
+  // Another attempt's rows are never counted.
+  assert.equal(
+    attemptCountsView({ attemptId: "attempt-3", verification, tests }).counts,
+    null,
+  );
+  // The persisted record wins when it carries counts.
+  const fromRecord = attemptCountsView({
+    attemptId: "attempt-1",
+    verification: {
+      ...verification,
+      counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+    },
+    tests,
+  });
+  assert.equal(fromRecord.source, "verification record");
+  assert.deepEqual(fromRecord.counts, {
+    passed: 1,
+    failed: 0,
+    skipped: 0,
+    total: 1,
+  });
+  assert.equal(
+    attemptCountsView({ attemptId: "attempt-1", verification: null, tests: [] })
+      .source,
+    "none",
+  );
 });
 
 test("retry and cancel reasons are mandatory", () => {

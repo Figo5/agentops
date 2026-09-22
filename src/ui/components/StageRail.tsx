@@ -5,6 +5,7 @@
  */
 import {
   classNames,
+  fixLoopCycleLabel,
   statusLabel,
   type RailLoop,
   type RailNode,
@@ -113,7 +114,11 @@ function RailNodeButton({
           {node.cycle > 1 ? (
             <>
               <span aria-hidden="true">·</span>
-              <span>cycle {node.cycle}</span>
+              <span>
+                {node.loopPhase
+                  ? `fixes from review cycle ${node.cycle}`
+                  : `review cycle ${node.cycle}`}
+              </span>
             </>
           ) : null}
           <span aria-hidden="true">·</span>
@@ -147,7 +152,7 @@ function RailLoopBranch({
       }
     >
       <summary className="rail__loophead">
-        ↺ review cycle {loop.cycle}/{loop.maxReviewCycles}{" "}
+        ↺ {fixLoopCycleLabel(loop.cycle, loop.maxReviewCycles)}{" "}
         {loop.activated ? "· active" : "· dormant"}
       </summary>
       {loop.nodes.map((node) => (

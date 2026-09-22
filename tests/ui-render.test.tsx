@@ -33,7 +33,7 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
 
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.status, 0, `render harness failed:\n${output}`);
-  assert.match(output, /6\/6 render checks passed/);
+  assert.match(output, /10\/10 render checks passed/);
   assert.match(output, /ok - first-run empty state/);
   assert.match(
     output,
@@ -43,4 +43,13 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
     output,
     /ok - the app shell renders its navigation and loading state/,
   );
+  assert.match(
+    output,
+    /ok - tabs use a roving tabindex and every aria-controls has a panel/,
+  );
+  assert.match(
+    output,
+    /ok - approval evidence precedes the decision buttons and gates the reason/,
+  );
+  assert.match(output, /ok - the final acceptance gate offers Accept run/);
 });

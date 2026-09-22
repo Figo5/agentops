@@ -75,7 +75,12 @@ test("first-run registration, stage plan, live run, exact prompt, approval and r
     await expect(
       page.getByText("WAITING FOR YOU", { exact: true }).first(),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    // The final human gate accepts the run explicitly; the decision buttons
+    // appear after the persisted evidence for that gate.
+    await expect(
+      page.getByText("Final acceptance gate", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Accept run", exact: true }).click();
     await expect.poll(() => app.store.listRuns()[0]?.status).toBe("COMPLETED");
     await page.reload();
     await expect(
@@ -169,6 +174,121 @@ test("retry preserves the failed attempt and exposes the reviewer verdict", asyn
     await expect(
       page.getByRole("button", { name: /#2 COMPLETED/ }),
     ).toBeVisible();
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a rejection gate shows evidence first, collects a reason only after the decision, and the skip link keeps the route", async ({
+  page,
+}) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentops-gate-ui-"));
+  const app = createApp();
+  const port = await app.listen(0);
+  try {
+    const project = app.store.createProject({
+      name: "Gate fixture",
+      canonicalRoot: root,
+      vcs: "none",
+      verificationCommands: [
+        {
+          name: "test",
+          executable: process.execPath,
+          // node:test-shaped output: the normalized test run is parsed
+          // confidently while the attempt's own verification record carries
+          // counts: null, which is what the real runs persist.
+          args: ["-e", 'console.log("# pass 7\\n# fail 0\\n# tests 7")'],
+        },
+      ],
+    });
+    const reviewer = app.store
+      .listAgents()
+      .find((a) => a.roleHint === "reviewer")!;
+    app.store.updateAgent(reviewer.id, { config: { scenario: "rejection" } });
+    const run = (
+      await app.engine.createRun({
+        projectId: project.id,
+        templateId: "implement-review",
+        goal: "Exercise the rejection gate",
+        agents: Object.fromEntries(
+          app.store.listAgents().map((a) => [a.roleHint!, a.id]),
+        ),
+      })
+    ).run;
+    await app.engine.startRun(run.id);
+    await expect
+      .poll(() => app.store.requireRun(run.id).status, { timeout: 20000 })
+      .toBe("WAITING_APPROVAL");
+
+    await page.goto(`http://127.0.0.1:${port}/#/run/${run.id}`);
+    await expect(
+      page.getByText("Review rejected — human decision required").first(),
+    ).toBeVisible();
+
+    // Evidence is rendered before the decision buttons and carries the persisted
+    // verdict, the reviewer resolved from the recorded attempt, and the counts
+    // correlated from the normalized test run.
+    const evidence = page.locator(".approval-evidence");
+    await expect(evidence).toContainText("REJECT");
+    await expect(evidence).toContainText("7/7 passed");
+    await expect(evidence).toContainText("counts from the normalized test run");
+    await expect(evidence).toContainText(reviewer.name);
+    await expect(
+      page.getByRole("button", { name: "Reject with override" }),
+    ).toHaveCount(0);
+    const evidenceBox = await evidence.boundingBox();
+    const rejectBox = await page
+      .getByRole("button", { name: "Reject", exact: true })
+      .boundingBox();
+    expect(evidenceBox!.y).toBeLessThan(rejectBox!.y);
+
+    // The mandatory reason field appears only once a decision needs one.
+    await expect(page.locator("#approval-reason")).toHaveCount(0);
+    await page.getByRole("button", { name: "Reject", exact: true }).click();
+    await expect(page.locator("#approval-reason")).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: "Confirm Reject" }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.locator("#approval-reason")).toHaveCount(0);
+    expect(app.store.requireRun(run.id).status).toBe("WAITING_APPROVAL");
+
+    // The skip link focuses the main landmark without becoming a route.
+    const hash = await page.evaluate(() => window.location.hash);
+    await page.locator(".skip-link").focus();
+    await page.keyboard.press("Enter");
+    await expect
+      .poll(() => page.evaluate(() => window.location.hash))
+      .toBe(hash);
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.id))
+      .toBe("main-content");
+    await expect(
+      page.getByRole("heading", { name: /Exercise the rejection gate/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Mission control" }),
+    ).toHaveCount(0);
+
+    // Overriding with a reason is the recorded, audited path forward.
+    await page
+      .getByRole("button", { name: "Override rejection and continue" })
+      .click();
+    await page
+      .getByLabel("Reason for overriding the rejection")
+      .fill("independent verification passed");
+    await page
+      .getByRole("button", { name: "Confirm Override rejection and continue" })
+      .click();
+    await expect
+      .poll(() => app.store.requireRun(run.id).status, { timeout: 20000 })
+      .not.toBe("WAITING_APPROVAL");
+    const approval = app.store
+      .listApprovals(run.id)
+      .find((entry) => entry.gate === "review_reject")!;
+    expect(approval.decision).toBe("override");
+    expect(approval.instruction).toContain("independent verification passed");
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

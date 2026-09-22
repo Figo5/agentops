@@ -28,12 +28,14 @@ import type {
   ApprovalDecision,
   ApprovalRecord,
   ArtifactRecord,
+  AttemptRecord,
   CommandSpec,
   EventActor,
   EventCategory,
   EventRecord,
   GitSnapshotRecord,
   ProjectRecord,
+  ReviewVerdictRecord,
   ReviewVerdictKind,
   RunRecord,
   StagePlan,
@@ -42,6 +44,7 @@ import type {
   TaskRecord,
   TestRunRecord,
   Usage,
+  VerificationOutcomeRecord,
 } from "../core/types.js";
 
 /* ------------------------------------------------------------------ */
@@ -976,6 +979,13 @@ export function snapshotView(snapshot: GitSnapshotRecord): SnapshotView {
 /* Tests, commands, artifacts, usage                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Shown whenever a command outcome or test record exists but no counts were
+ * parsed confidently. A passed command with unparsed counts is still a passed
+ * command; the count itself stays explicitly unavailable rather than zero.
+ */
+export const TEST_COUNT_UNAVAILABLE = "Test count unavailable";
+
 export function testCountsLabel(test: {
   passed: number | null;
   failed: number | null;
@@ -984,7 +994,7 @@ export function testCountsLabel(test: {
   parsedConfidently: boolean;
 }): string {
   if (!test.parsedConfidently || test.total === null)
-    return `${UNKNOWN} (counts not parsed confidently)`;
+    return `${TEST_COUNT_UNAVAILABLE} (counts not parsed confidently)`;
   const parts = [`${formatCount(test.passed)} passed`];
   if (test.failed !== null && test.failed > 0)
     parts.push(`${formatCount(test.failed)} failed`);
@@ -992,6 +1002,79 @@ export function testCountsLabel(test: {
     parts.push(`${formatCount(test.skipped)} skipped`);
   parts.push(`${formatCount(test.total)} total`);
   return parts.join(" / ");
+}
+
+/** Counts for a persisted verification outcome, or an explicit absence. */
+export function verificationCountsLabel(
+  counts: { passed: number; failed: number; total: number } | null | undefined,
+): string {
+  if (!counts) return TEST_COUNT_UNAVAILABLE;
+  return `${formatCount(counts.passed)} passed / ${formatCount(counts.failed)} failed / ${formatCount(counts.total)} total`;
+}
+
+export interface AttemptCountsView {
+  counts: {
+    passed: number;
+    failed: number;
+    skipped: number;
+    total: number;
+  } | null;
+  /** Where the numbers came from, so nothing looks more certain than it is. */
+  source: "verification record" | "normalized test run" | "none";
+  framework: string | null;
+}
+
+/**
+ * Counts for one attempt.
+ *
+ * A persisted verification outcome can carry `counts: null` while the
+ * normalized test runs for the same attempt were parsed confidently (the real
+ * runs behave this way). The attempt's own rows are correlated by `attemptId` —
+ * the newest confidently parsed row is used, never a sum, so an earlier
+ * verification is never double-counted and no prose is parsed.
+ */
+export function attemptCountsView(input: {
+  attemptId: string;
+  verification: VerificationOutcomeRecord | null;
+  tests: readonly Pick<
+    TestRunRecord,
+    | "attemptId"
+    | "framework"
+    | "passed"
+    | "failed"
+    | "skipped"
+    | "total"
+    | "parsedConfidently"
+    | "createdAt"
+  >[];
+}): AttemptCountsView {
+  if (input.verification?.counts)
+    return {
+      counts: input.verification.counts,
+      source: "verification record",
+      framework: null,
+    };
+  const newest = input.tests
+    .filter(
+      (test) =>
+        test.attemptId === input.attemptId &&
+        test.parsedConfidently &&
+        test.total !== null,
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .at(-1);
+  if (newest && newest.total !== null)
+    return {
+      counts: {
+        passed: newest.passed ?? 0,
+        failed: newest.failed ?? 0,
+        skipped: newest.skipped ?? 0,
+        total: newest.total,
+      },
+      source: "normalized test run",
+      framework: newest.framework,
+    };
+  return { counts: null, source: "none", framework: null };
 }
 
 export function testSummary(test: TestRunRecord): string {
@@ -1013,25 +1096,37 @@ export function commandLine(
     .join(" ");
 }
 
+/**
+ * One honest sentence for a persisted verification outcome.
+ *
+ * A successful command whose counts were not parsed confidently still reads as
+ * "Command passed" — with the count explicitly unavailable rather than invented.
+ */
 export function verificationLabel(
-  outcome: {
-    status: string;
-    summary: string;
-    counts: {
-      passed: number;
-      failed: number;
-      skipped: number;
-      total: number;
-    } | null;
-  } | null,
+  outcome:
+    | (Pick<VerificationOutcomeRecord, "status" | "summary"> & {
+        counts: {
+          passed: number;
+          failed: number;
+          skipped: number;
+          total: number;
+        } | null;
+      })
+    | null,
 ): string {
   if (!outcome) return `verification ${UNKNOWN}`;
   if (outcome.status === "unavailable")
     return `verification unavailable · ${singleLine(outcome.summary)}`;
+  const verb =
+    outcome.status === "passed"
+      ? "Command passed"
+      : outcome.status === "failed"
+        ? "Command failed"
+        : `verification ${outcome.status}`;
   const counts = outcome.counts
     ? ` · ${outcome.counts.passed}/${outcome.counts.total} passed${outcome.counts.failed > 0 ? `, ${outcome.counts.failed} failed` : ""}`
-    : "";
-  return `verification ${outcome.status}${counts}`;
+    : ` · ${TEST_COUNT_UNAVAILABLE}`;
+  return `${verb}${counts}`;
 }
 
 export interface ArtifactView {
@@ -1109,6 +1204,122 @@ export function verdictLabel(
   return verdict.replace(/_/g, " ");
 }
 
+/**
+ * Reviewer identity as a plain name.
+ *
+ * Review payloads carry a free-form `reviewer` string. When that string happens
+ * to be a configured agent id, the operator sees the agent's display name; an
+ * unknown string is shown verbatim and an absent one says so. Nothing is
+ * guessed — an absent identity is never replaced by a plausible name.
+ */
+export function reviewerName(
+  reviewer: string | null | undefined,
+  agents: readonly Pick<AgentRecord, "id" | "name">[] = [],
+): string {
+  const value = (reviewer ?? "").trim();
+  if (!value) return "reviewer not recorded";
+  return agents.find((agent) => agent.id === value)?.name ?? value;
+}
+
+export interface ReviewerIdentity {
+  /** Display name, or an explicit absence. Never invented. */
+  name: string;
+  /** Where the name came from, so the UI can be honest about the source. */
+  source: "verdict field" | "reviewer attempt agent" | "none";
+  agentId: string | null;
+}
+
+/**
+ * Durable reviewer identity.
+ *
+ * A real verdict payload often omits the free-form `reviewer` string, but the
+ * verdict still records `attemptId`, and that attempt records the agent that
+ * produced it. That persisted relationship is used instead of reporting the
+ * reviewer as unknown, and the source is reported with the name. Nothing is
+ * inferred: when neither the field nor the attempt resolves, the identity stays
+ * explicitly absent.
+ */
+export function reviewerIdentity(input: {
+  reviewer?: string | null;
+  attemptId?: string | null;
+  attempts?: readonly Pick<AttemptRecord, "id" | "agentId">[];
+  agents?: readonly Pick<AgentRecord, "id" | "name">[];
+}): ReviewerIdentity {
+  const agents = input.agents ?? [];
+  const value = (input.reviewer ?? "").trim();
+  if (value) {
+    const agent = agents.find((candidate) => candidate.id === value);
+    return {
+      name: reviewerName(value, agents),
+      source: "verdict field",
+      agentId: agent?.id ?? null,
+    };
+  }
+  const attempt = input.attempts?.find(
+    (candidate) => candidate.id === input.attemptId,
+  );
+  const agentId = attempt?.agentId ?? null;
+  if (agentId) {
+    const agent = agents.find((candidate) => candidate.id === agentId);
+    if (agent)
+      return {
+        name: agent.name,
+        source: "reviewer attempt agent",
+        agentId,
+      };
+    return { name: agentId, source: "reviewer attempt agent", agentId };
+  }
+  return { name: "reviewer not recorded", source: "none", agentId: null };
+}
+
+/**
+ * The run-level review counter.
+ *
+ * `run.reviewCycle` is the 1-based review pass the run is on (the store seeds a
+ * new run at pass 1). The rail's fix/retest nodes instead count the fix
+ * iterations that were activated, so the two must never share an unqualified
+ * "cycle N" label or the numbers appear to contradict each other.
+ */
+export interface ReviewCycleView {
+  /** Review pass currently in progress (1-based, clamped to the budget). */
+  cycle: number;
+  /** Hard budget from the frozen run policy. */
+  max: number;
+  /** Fix iterations that can have run before the current pass. */
+  used: number;
+  /** `true` once the last allowed review pass has been reached. */
+  exhausted: boolean;
+  /** One label for every surface that shows the run-level counter. */
+  label: string;
+}
+
+export function reviewCycleView(run: {
+  reviewCycle: number;
+  policy: { maxReviewCycles: number };
+}): ReviewCycleView {
+  const max = Math.max(1, Math.trunc(run.policy.maxReviewCycles) || 1);
+  const raw = Math.trunc(run.reviewCycle);
+  const cycle = Math.min(Math.max(1, Number.isFinite(raw) ? raw : 1), max);
+  return {
+    cycle,
+    max,
+    used: cycle - 1,
+    exhausted: cycle >= max,
+    label: `review cycle ${cycle} of ${max}`,
+  };
+}
+
+/**
+ * Label for a fix/retest branch: the number is the review pass that requested
+ * the fixes, never a run-level counter.
+ */
+export function fixLoopCycleLabel(cycle: number, max: number): string {
+  const value = Math.trunc(cycle);
+  if (!Number.isFinite(value) || value <= 0)
+    return `no fix cycle has run yet (max ${max})`;
+  return `fixes from review cycle ${value} of ${max}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* Approvals                                                           */
 /* ------------------------------------------------------------------ */
@@ -1128,7 +1339,12 @@ export interface DecisionOption {
   label: string;
   detail: string;
   tone: Tone;
+  /** `true` when the decision cannot be submitted without a reason. */
   requiresInstruction: boolean;
+  /** Mandatory-reason field label; `null` when the decision takes no reason. */
+  reasonLabel: string | null;
+  /** Why the reason is required and where it is stored. */
+  reasonHelp: string | null;
 }
 
 const DECISION_LIBRARY: Record<
@@ -1141,6 +1357,8 @@ const DECISION_LIBRARY: Record<
       "Accept this gate. The run advances to the next stage (final verification still runs where the plan requires it).",
     tone: "success",
     requiresInstruction: false,
+    reasonLabel: null,
+    reasonHelp: null,
   },
   reject: {
     label: "Reject",
@@ -1148,13 +1366,19 @@ const DECISION_LIBRARY: Record<
       "Reject the work at this gate and stop the run. Nothing is accepted and no override is recorded.",
     tone: "danger",
     requiresInstruction: true,
+    reasonLabel: "Reason for rejecting",
+    reasonHelp:
+      "Mandatory. Stored on the approval record as your decision reason, so the rejection is auditable later.",
   },
   override: {
-    label: "Reject with override",
+    label: "Override rejection and continue",
     detail:
-      "Record an operator override of the blocking verdict. The override is audited and cannot skip final verification.",
+      "Record an operator override of the reviewer's blocking verdict and let the run continue. The override is audited, is stored with your reason, and cannot skip final verification or the final human acceptance gate.",
     tone: "warn",
     requiresInstruction: true,
+    reasonLabel: "Reason for overriding the rejection",
+    reasonHelp:
+      "Mandatory. Explains why the blocking verdict is being overridden; stored on the approval record with your decision.",
   },
   retry: {
     label: "Retry stage",
@@ -1162,7 +1386,16 @@ const DECISION_LIBRARY: Record<
       "Create a new attempt for this stage. The failed attempt is kept as immutable history.",
     tone: "info",
     requiresInstruction: true,
+    reasonLabel: "Reason for retrying the stage",
+    reasonHelp: "Mandatory. Stored on the new attempt as its immutable reason.",
   },
+};
+
+/** The approve decision reads as an explicit acceptance at the final gate. */
+const FINAL_ACCEPTANCE_APPROVE: Pick<DecisionOption, "label" | "detail"> = {
+  label: "Accept run",
+  detail:
+    "Accept this completed run at the final human gate. Your acceptance, not the reviewer's exit code, is what ends the workflow.",
 };
 
 /**
@@ -1176,7 +1409,258 @@ export function approvalDecisionOptions(
   const order: ApprovalDecision[] = ["approve", "retry", "override", "reject"];
   return order
     .filter((decision) => approval.allowed.includes(decision))
-    .map((decision) => ({ decision, ...DECISION_LIBRARY[decision] }));
+    .map((decision) => {
+      const base = { decision, ...DECISION_LIBRARY[decision] };
+      if (decision === "approve" && approval.gate === "final_acceptance")
+        return { ...base, ...FINAL_ACCEPTANCE_APPROVE };
+      return base;
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* Approval evidence and operator input                                */
+/* ------------------------------------------------------------------ */
+
+export interface ApprovalEvidenceIssue {
+  severity: string;
+  description: string;
+  location: string | null;
+}
+
+export interface ApprovalEvidenceVerdict {
+  label: string;
+  tone: Tone;
+  valid: boolean;
+  cycle: number;
+  /** Stage that produced the verdict, so a fallback verdict is never misread. */
+  stageKey: string;
+  reviewer: string;
+  /** How the reviewer name was resolved (verdict field vs recorded attempt). */
+  reviewerSource: ReviewerIdentity["source"];
+  summary: string | null;
+  issues: ApprovalEvidenceIssue[];
+  createdAt: string;
+}
+
+export interface ApprovalEvidence {
+  gate: string;
+  gateLabel: string;
+  reason: string | null;
+  stageKey: string | null;
+  cycle: ReviewCycleView;
+  /** The verdict that stopped the run, when the gate came from a review. */
+  verdict: ApprovalEvidenceVerdict | null;
+  /** Latest verification recorded for the run, with the stage it came from. */
+  verification: ApprovalEvidenceVerification | null;
+}
+
+export interface ApprovalEvidenceVerification {
+  status: string;
+  label: string;
+  attemptNumber: number;
+  stageKey: string;
+  /** `true` when the verification belongs to the stage that opened the gate. */
+  onGateStage: boolean;
+  /** Where the counts in the label came from. */
+  countsSource: AttemptCountsView["source"];
+  framework: string | null;
+}
+
+/**
+ * The persisted facts behind a pending human gate.
+ *
+ * The UI renders this *before* the decision buttons, so an operator decides
+ * from the recorded evidence (verdict, issues, verification, cycle) instead of
+ * from a bare pair of buttons. Every field is read from the payload; nothing is
+ * summarised away and nothing is invented.
+ *
+ * The gating stage is preferred, and the latest run-wide record is used when
+ * that stage has none (the final acceptance gate is opened by the human stage
+ * itself, and the evidence that matters there is the last verification the run
+ * recorded — reported with its own stage so the operator can see where it is
+ * from).
+ */
+export function approvalEvidenceView(input: {
+  approval: Pick<ApprovalRecord, "gate" | "reason" | "stageKey"> | null;
+  reviewCycle: ReviewCycleView;
+  verdicts: readonly ReviewVerdictRecord[];
+  attempts: readonly Pick<
+    AttemptRecord,
+    | "id"
+    | "attemptNumber"
+    | "stageKey"
+    | "agentId"
+    | "verification"
+    | "reviewVerdictId"
+  >[];
+  tests?: readonly Pick<
+    TestRunRecord,
+    | "attemptId"
+    | "framework"
+    | "passed"
+    | "failed"
+    | "skipped"
+    | "total"
+    | "parsedConfidently"
+    | "createdAt"
+  >[];
+  agents?: readonly Pick<AgentRecord, "id" | "name">[];
+}): ApprovalEvidence | null {
+  const { approval } = input;
+  if (!approval) return null;
+  const verdictRecord =
+    input.verdicts
+      .filter((verdict) => verdict.stageKey === approval.stageKey)
+      .at(-1) ?? input.verdicts.at(-1);
+  const verified = [...input.attempts]
+    .filter((candidate) => candidate.verification)
+    .reverse();
+  const attempt =
+    (verdictRecord
+      ? verified.find(
+          (candidate) =>
+            candidate.attemptNumber === verdictRecord.cycle &&
+            candidate.stageKey === verdictRecord.stageKey,
+        )
+      : undefined) ??
+    verified.find((candidate) => candidate.stageKey === approval.stageKey) ??
+    verified[0];
+  const counts = attempt
+    ? attemptCountsView({
+        attemptId: attempt.id,
+        verification: attempt.verification,
+        tests: input.tests ?? [],
+      })
+    : null;
+  const identity = verdictRecord
+    ? reviewerIdentity({
+        reviewer: verdictRecord.reviewer,
+        attemptId: verdictRecord.attemptId,
+        attempts: input.attempts,
+        agents: input.agents,
+      })
+    : null;
+  return {
+    gate: approval.gate,
+    gateLabel: approvalGateLabel(approval.gate),
+    reason: approval.reason,
+    stageKey: approval.stageKey,
+    cycle: input.reviewCycle,
+    verdict:
+      verdictRecord && identity
+        ? {
+            label: verdictLabel(verdictRecord.verdict, verdictRecord.valid),
+            tone: verdictTone(verdictRecord.verdict),
+            valid: verdictRecord.valid,
+            cycle: verdictRecord.cycle,
+            stageKey: verdictRecord.stageKey,
+            reviewer: identity.name,
+            reviewerSource: identity.source,
+            summary: verdictRecord.summary,
+            issues: verdictRecord.issues.map((issue) => ({
+              severity: issue.severity,
+              description: issue.description,
+              location: issue.path
+                ? `${issue.path}${issue.line ? `:${issue.line}` : ""}`
+                : null,
+            })),
+            createdAt: verdictRecord.createdAt,
+          }
+        : null,
+    verification:
+      attempt && attempt.verification && counts
+        ? {
+            status: attempt.verification.status,
+            label: verificationLabel({
+              ...attempt.verification,
+              counts: counts.counts,
+            }),
+            attemptNumber: attempt.attemptNumber,
+            stageKey: attempt.stageKey,
+            onGateStage: attempt.stageKey === approval.stageKey,
+            countsSource: counts.source,
+            framework: counts.framework,
+          }
+        : null,
+  };
+}
+
+export interface PendingInputQuestion {
+  /** The agent's own words, verbatim from the persisted record. */
+  text: string;
+  source: "input.requested" | "agent.waiting" | "attempt summary" | "none";
+  attemptNumber: number | null;
+  stageKey: string | null;
+  at: string | null;
+}
+
+/**
+ * The actual question an agent is blocked on.
+ *
+ * The operator must see what was asked, next to the input box, taken verbatim
+ * from the record and scoped to the attempt that is actually waiting: the
+ * newest `agent.waiting` message of that attempt first (that is the agent's own
+ * question), then its `input.requested` summary, then its stored result
+ * summary. An attempt that is no longer waiting never contributes its stale
+ * question, and an absent question is reported as absent instead of being
+ * paraphrased or invented.
+ */
+export function pendingInputQuestion(input: {
+  events: readonly EventRecord[];
+  attempts: readonly Pick<
+    AttemptRecord,
+    "id" | "attemptNumber" | "stageKey" | "status" | "resultSummary"
+  >[];
+}): PendingInputQuestion {
+  const waiting = [...input.attempts]
+    .filter((candidate) => candidate.status === "WAITING_INPUT")
+    .sort((a, b) => b.attemptNumber - a.attemptNumber)[0];
+  const scoped = waiting
+    ? input.events.filter((event) => event.attemptId === waiting.id)
+    : [];
+  const newest = (
+    events: readonly EventRecord[],
+    type: string,
+  ): { text: string; event: EventRecord } | null => {
+    const event = events.filter((candidate) => candidate.type === type).at(-1);
+    if (!event) return null;
+    const message = eventMessage(event).trim();
+    return message ? { text: message, event } : null;
+  };
+  const found =
+    newest(scoped, "agent.waiting") ??
+    newest(scoped, "input.requested") ??
+    (waiting ? null : newest(input.events, "input.requested"));
+  if (found) {
+    const attempt = input.attempts.find(
+      (candidate) => candidate.id === found.event.attemptId,
+    );
+    return {
+      text: found.text,
+      source:
+        found.event.type === "agent.waiting"
+          ? "agent.waiting"
+          : "input.requested",
+      attemptNumber: attempt?.attemptNumber ?? waiting?.attemptNumber ?? null,
+      stageKey: found.event.stageKey ?? waiting?.stageKey ?? null,
+      at: found.event.createdAt,
+    };
+  }
+  if (waiting?.resultSummary?.trim())
+    return {
+      text: waiting.resultSummary.trim(),
+      source: "attempt summary",
+      attemptNumber: waiting.attemptNumber,
+      stageKey: waiting.stageKey,
+      at: null,
+    };
+  return {
+    text: "",
+    source: "none",
+    attemptNumber: waiting?.attemptNumber ?? null,
+    stageKey: waiting?.stageKey ?? null,
+    at: null,
+  };
 }
 
 /* ------------------------------------------------------------------ */

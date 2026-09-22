@@ -18,6 +18,8 @@ import {
   formatDuration,
   formatTimestamp,
   relativeTime,
+  reviewerIdentity,
+  reviewCycleView,
   snapshotView,
   statusLabel,
   testCountsLabel,
@@ -40,9 +42,12 @@ import {
   Notice,
   Pill,
   StatusPill,
+  TabPanel,
   TextInput,
   Tabs,
 } from "./Bits.js";
+
+const INSPECTOR_TABS_ID = "inspector-sections";
 
 function SnapshotCard({
   client,
@@ -315,6 +320,7 @@ export function Inspector({
   const [showAllTests, setShowAllTests] = useState(false);
   useEffect(() => setShowAllTests(false), [detail.run.id]);
 
+  const reviewCycle = reviewCycleView(detail.run);
   const tests = showAllTests ? detail.tests : detail.tests.slice(0, 5);
   const usageRows = detail.attempts.map((attempt) => ({
     id: attempt.id,
@@ -326,6 +332,7 @@ export function Inspector({
   return (
     <aside className="inspector" aria-label="Run inspector">
       <Tabs
+        idBase={INSPECTOR_TABS_ID}
         label="Run inspector sections"
         active={panel}
         onChange={setPanel}
@@ -336,10 +343,20 @@ export function Inspector({
           { id: "record", label: "Details" },
         ]}
       />
-      <div hidden={panel !== "git"}>
+      <TabPanel
+        idBase={INSPECTOR_TABS_ID}
+        id="git"
+        selected={panel === "git"}
+        className="inspector-section"
+      >
         <SnapshotCard client={client} detail={detail} />
-      </div>
-      <div className="inspector-section" hidden={panel !== "evidence"}>
+      </TabPanel>
+      <TabPanel
+        idBase={INSPECTOR_TABS_ID}
+        id="evidence"
+        selected={panel === "evidence"}
+        className="inspector-section"
+      >
         <Card
           title="Tests & verification"
           hint="Only confidently parsed counts are shown; anything else is UNKNOWN."
@@ -395,12 +412,23 @@ export function Inspector({
                     <Pill tone={verdictTone(verdict.verdict)}>
                       {verdictLabel(verdict.verdict, verdict.valid)}
                     </Pill>
-                    <span className="faint small">cycle {verdict.cycle}</span>
+                    <span className="faint small">
+                      review cycle {verdict.cycle}
+                    </span>
                   </div>
                   <div className="faint small">
-                    {verdict.stageKey} ·{" "}
-                    {verdict.reviewer ?? "reviewer unknown"} ·{" "}
-                    {formatTimestamp(verdict.createdAt)}
+                    {verdict.stageKey} · reviewer{" "}
+                    <b className="wrap-anywhere">
+                      {
+                        reviewerIdentity({
+                          reviewer: verdict.reviewer,
+                          attemptId: verdict.attemptId,
+                          attempts: detail.attempts,
+                          agents: detail.agents,
+                        }).name
+                      }
+                    </b>{" "}
+                    · {formatTimestamp(verdict.createdAt)}
                   </div>
                   {verdict.summary ? (
                     <p className="small wrap-anywhere">{verdict.summary}</p>
@@ -416,8 +444,13 @@ export function Inspector({
             </div>
           )}
         </Card>
-      </div>
-      <div className="inspector-section" hidden={panel !== "artifacts"}>
+      </TabPanel>
+      <TabPanel
+        idBase={INSPECTOR_TABS_ID}
+        id="artifacts"
+        selected={panel === "artifacts"}
+        className="inspector-section"
+      >
         <Card
           title="Artifacts"
           hint="References to canonical paths inside the repository. No payload is downloaded."
@@ -459,8 +492,13 @@ export function Inspector({
             refresh={refreshDetail}
           />
         </Card>
-      </div>
-      <div className="inspector-section" hidden={panel !== "record"}>
+      </TabPanel>
+      <TabPanel
+        idBase={INSPECTOR_TABS_ID}
+        id="record"
+        selected={panel === "record"}
+        className="inspector-section"
+      >
         <Card
           title="Measured usage"
           hint={`${knownUsage}/${usageRows.length} attempt(s) report measured usage. Unknown is never rendered as zero.`}
@@ -509,7 +547,7 @@ export function Inspector({
               ],
               [
                 "Review cycle",
-                `${detail.run.reviewCycle} / max ${detail.run.policy.maxReviewCycles}`,
+                `${reviewCycle.label} · ${reviewCycle.used} fix cycle(s) used`,
               ],
               ["Git policy", detail.run.policy.gitPolicy],
               ["Epoch", String(detail.run.epoch)],
@@ -523,7 +561,7 @@ export function Inspector({
             ]}
           />
         </Card>
-      </div>
+      </TabPanel>
     </aside>
   );
 }

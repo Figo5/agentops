@@ -7,24 +7,31 @@
  * immutable attempt with its own reason, and the failed one stays visible.
  */
 import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type { AttemptRecord, StageRecord } from "../../core/types.js";
 import type { RunDetailResponse } from "../api.js";
 import {
   artifactView,
+  attemptCountsView,
   commandLine,
   diffLines,
   eventMessage,
   filterEvents,
+  fixLoopCycleLabel,
   formatClock,
   formatDuration,
   formatTimestamp,
   promptComparisons,
   relativeTime,
+  reviewerIdentity,
+  reviewCycleView,
   statusLabel,
+  testCountsLabel,
   text,
   usageView,
   verdictLabel,
   verdictTone,
+  verificationCountsLabel,
   verificationLabel,
 } from "../view-model.js";
 import {
@@ -36,6 +43,7 @@ import {
   Notice,
   Pill,
   StatusPill,
+  TabPanel,
   Tabs,
 } from "./Bits.js";
 
@@ -44,6 +52,32 @@ function duration(attempt: AttemptRecord): string {
   const ms =
     new Date(attempt.endedAt).getTime() - new Date(attempt.startedAt).getTime();
   return Number.isFinite(ms) && ms >= 0 ? formatDuration(ms) : "UNKNOWN";
+}
+
+const ATTEMPT_TABS_ID = "attempt-sections";
+
+/**
+ * Panel wrapper for one attempt section.
+ *
+ * The panel element always exists so every tab's `aria-controls` resolves while
+ * only the selected section's body is rendered (the output pane can hold
+ * thousands of log lines, so hidden panels must not cost DOM).
+ */
+function Panel({
+  id,
+  active,
+  children,
+}: {
+  id: string;
+  active: string;
+  children: ReactNode;
+}) {
+  const selected = active === id;
+  return (
+    <TabPanel idBase={ATTEMPT_TABS_ID} id={id} selected={selected}>
+      {selected ? children : null}
+    </TabPanel>
+  );
 }
 
 function AttemptTabs({
@@ -86,10 +120,18 @@ function AttemptTabs({
     [detail.attempts, attempt.id],
   );
   const usage = usageView(attempt.usage, attempt.usageKnown);
+  // Counts come from the attempt's own verification record, or from the
+  // normalized test runs recorded for this attempt when the record has none.
+  const counts = attemptCountsView({
+    attemptId: attempt.id,
+    verification: attempt.verification,
+    tests,
+  });
 
   return (
     <div>
       <Tabs
+        idBase={ATTEMPT_TABS_ID}
         label={`Attempt ${attempt.attemptNumber} sections`}
         active={tab}
         onChange={setTab}
@@ -104,7 +146,7 @@ function AttemptTabs({
         ]}
       />
 
-      {tab === "prompt" ? (
+      <Panel id="prompt" active={tab}>
         <div className="stack">
           <div className="row row--between">
             <span className="faint small">
@@ -199,9 +241,9 @@ function AttemptTabs({
             </div>
           ) : null}
         </div>
-      ) : null}
+      </Panel>
 
-      {tab === "output" ? (
+      <Panel id="output" active={tab}>
         <div className="stack">
           <KeyValue
             rows={[
@@ -263,9 +305,9 @@ function AttemptTabs({
             output is flagged by the server on the command records.
           </p>
         </div>
-      ) : null}
+      </Panel>
 
-      {tab === "commands" ? (
+      <Panel id="commands" active={tab}>
         <div className="stack">
           {commands.length === 0 ? (
             <p className="faint small">
@@ -304,9 +346,9 @@ function AttemptTabs({
             ))
           )}
         </div>
-      ) : null}
+      </Panel>
 
-      {tab === "verification" ? (
+      <Panel id="verification" active={tab}>
         <div className="stack">
           {attempt.verification ? (
             <>
@@ -330,16 +372,22 @@ function AttemptTabs({
                   ["Commands", String(attempt.verification.commandCount)],
                   [
                     "Counts",
-                    attempt.verification.counts
-                      ? `${attempt.verification.counts.passed} passed / ${attempt.verification.counts.failed} failed / ${attempt.verification.counts.total} total`
-                      : "UNKNOWN (not parsed confidently)",
+                    <span className="wrap-anywhere">
+                      {verificationCountsLabel(counts.counts)}
+                      {counts.source === "normalized test run"
+                        ? ` (from the normalized test run${counts.framework ? ` ${counts.framework}` : ""})`
+                        : ""}
+                    </span>,
                   ],
                   ["Summary", attempt.verification.summary],
                   ["Reason", attempt.verification.reason ?? "none"],
                 ]}
               />
               <p className="faint small">
-                {verificationLabel(attempt.verification)}
+                {verificationLabel({
+                  ...attempt.verification,
+                  counts: counts.counts,
+                })}
               </p>
             </>
           ) : (
@@ -365,9 +413,9 @@ function AttemptTabs({
                       <StatusPill status={test.status} />
                     </td>
                     <td>
-                      {test.parsedConfidently && test.total !== null
-                        ? `${test.passed ?? "UNKNOWN"} passed / ${test.failed ?? "UNKNOWN"} failed / ${test.total} total`
-                        : "UNKNOWN (counts not parsed confidently)"}
+                      <span className="wrap-anywhere">
+                        {testCountsLabel(test)}
+                      </span>
                     </td>
                     <td>{formatDuration(test.durationMs)}</td>
                   </tr>
@@ -376,9 +424,9 @@ function AttemptTabs({
             </table>
           ) : null}
         </div>
-      ) : null}
+      </Panel>
 
-      {tab === "review" ? (
+      <Panel id="review" active={tab}>
         <div className="stack">
           {verdicts.length === 0 ? (
             <p className="faint small">
@@ -392,9 +440,18 @@ function AttemptTabs({
                     {verdictLabel(verdict.verdict, verdict.valid)}
                   </Pill>
                   <span className="faint small">
-                    cycle {verdict.cycle} ·{" "}
-                    {verdict.reviewer ?? "reviewer unknown"} ·{" "}
-                    {formatTimestamp(verdict.createdAt)}
+                    review cycle {verdict.cycle} · reviewer{" "}
+                    <b className="wrap-anywhere">
+                      {
+                        reviewerIdentity({
+                          reviewer: verdict.reviewer,
+                          attemptId: verdict.attemptId,
+                          attempts: detail.attempts,
+                          agents: detail.agents,
+                        }).name
+                      }
+                    </b>{" "}
+                    · {formatTimestamp(verdict.createdAt)}
                   </span>
                 </div>
                 {!verdict.valid ? (
@@ -460,9 +517,9 @@ function AttemptTabs({
             ))
           )}
         </div>
-      ) : null}
+      </Panel>
 
-      {tab === "artifacts" ? (
+      <Panel id="artifacts" active={tab}>
         <div className="stack">
           {attempt.artifacts.length === 0 && artifacts.length === 0 ? (
             <p className="faint small">This attempt references no artifacts.</p>
@@ -499,9 +556,9 @@ function AttemptTabs({
             repository. Payloads are never copied into the database.
           </p>
         </div>
-      ) : null}
+      </Panel>
 
-      {tab === "usage" ? (
+      <Panel id="usage" active={tab}>
         <div className="stack">
           {!usage.known ? (
             <Notice tone="warn">
@@ -521,7 +578,7 @@ function AttemptTabs({
             ]}
           />
         </div>
-      ) : null}
+      </Panel>
     </div>
   );
 }
@@ -587,7 +644,14 @@ export function AttemptDetail({
             ],
             [
               "Cycle",
-              `${stage.cycle}${stage.loop ? ` (${stage.loop.phase}, max ${stage.loop.maxReviewCycles})` : ""}`,
+              stage.loop
+                ? `${fixLoopCycleLabel(stage.cycle, stage.loop.maxReviewCycles)} (${stage.loop.phase})`
+                : stage.kind === "review"
+                  ? reviewCycleView({
+                      reviewCycle: stage.cycle,
+                      policy: detail.run.policy,
+                    }).label
+                  : String(stage.cycle),
             ],
             ["Attempts", String(stage.attemptCount)],
             [

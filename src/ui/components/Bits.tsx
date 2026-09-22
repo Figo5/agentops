@@ -5,8 +5,8 @@
  * presentation. All state decisions live in `../view-model.ts` or the
  * feature components.
  */
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import type { ChangeEvent, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, KeyboardEvent, ReactNode } from "react";
 import type { DiffLine } from "../view-model.js";
 import {
   classNames,
@@ -445,20 +445,71 @@ export function CopyButton({
   );
 }
 
+/**
+ * Tab list with the ARIA tabs interaction pattern.
+ *
+ * `idBase` is shared with the matching `TabPanel`s, so every `aria-controls`
+ * resolves to a real element and every panel points back with
+ * `aria-labelledby`. Roving tabindex: only the selected tab is in the tab order
+ * and the arrow/Home/End keys move the selection and the focus together.
+ */
 export function Tabs({
   tabs,
   active,
   onChange,
   label,
+  idBase,
 }: {
   tabs: { id: string; label: string; count?: number }[];
   active: string;
   onChange: (id: string) => void;
   label: string;
+  /** Id prefix shared with the matching TabPanels (required, never ad hoc). */
+  idBase: string;
 }) {
-  const baseId = useId();
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (tabs.length === 0) return;
+    const current = tabs.findIndex((tab) => tab.id === active);
+    const index = current >= 0 ? current : 0;
+    let next: number;
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = (index + 1) % tabs.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = (index - 1 + tabs.length) % tabs.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = tabs.length - 1;
+        break;
+      default:
+        return;
+    }
+    const target = tabs[next];
+    if (!target) return;
+    event.preventDefault();
+    onChange(target.id);
+    const button = listRef.current?.querySelector<HTMLButtonElement>(
+      `[role="tab"][data-tab-id="${target.id}"]`,
+    );
+    button?.focus();
+  };
+
   return (
-    <div className="tabs" role="tablist" aria-label={label}>
+    <div
+      className="tabs"
+      role="tablist"
+      aria-label={label}
+      ref={listRef}
+      onKeyDown={onKeyDown}
+    >
       {tabs.map((tab) => {
         const selected = tab.id === active;
         return (
@@ -466,9 +517,11 @@ export function Tabs({
             key={tab.id}
             type="button"
             role="tab"
-            id={`${baseId}-${tab.id}`}
+            id={`${idBase}-${tab.id}`}
+            data-tab-id={tab.id}
             aria-selected={selected}
-            aria-controls={`${baseId}-${tab.id}-panel`}
+            aria-controls={`${idBase}-${tab.id}-panel`}
+            tabIndex={selected ? 0 : -1}
             className="tab"
             onClick={() => onChange(tab.id)}
           >
@@ -483,19 +536,89 @@ export function Tabs({
   );
 }
 
+/**
+ * One tab panel, present for every tab so `aria-controls` never dangles.
+ *
+ * A panel that is not selected is `hidden` (removed from the accessibility
+ * tree). Callers render the expensive body only for the selected panel, so the
+ * DOM does not grow with hidden content.
+ */
 export function TabPanel({
-  tabsId,
+  idBase,
   id,
+  selected,
   children,
+  className,
 }: {
-  tabsId?: string;
+  /** Must match the `idBase` passed to the controlling Tabs. */
+  idBase: string;
   id: string;
+  selected: boolean;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div role="tabpanel" id={`${tabsId ?? ""}-${id}-panel`}>
+    <div
+      role="tabpanel"
+      id={`${idBase}-${id}-panel`}
+      aria-labelledby={`${idBase}-${id}`}
+      hidden={!selected}
+      className={className}
+      tabIndex={selected ? 0 : -1}
+    >
       {children}
     </div>
+  );
+}
+
+/**
+ * Two-line clamped text with an explicit expand control.
+ *
+ * Long goals used to stretch the run header. The text is clamped to two lines;
+ * the full value stays reachable through the toggle and the `title` attribute,
+ * and the toggle only appears when the text is actually clipped.
+ */
+export function ClampedText({
+  text,
+  className,
+  expandLabel = "Show full goal",
+  collapseLabel = "Show less",
+}: {
+  text: string;
+  className?: string;
+  expandLabel?: string;
+  collapseLabel?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+  const textRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    const node = textRef.current;
+    if (!node || expanded) return;
+    setClipped(node.scrollHeight - node.clientHeight > 1);
+  }, [text, expanded]);
+
+  return (
+    <span className={classNames("clamp", className)}>
+      <span
+        ref={textRef}
+        className={classNames("clamp__text", !expanded && "clamp__text--two")}
+        title={expanded ? undefined : text}
+      >
+        {text}
+      </span>
+      {clipped || expanded ? (
+        <button
+          type="button"
+          className="btn btn--sm btn--ghost clamp__toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? collapseLabel : expandLabel}
+        </button>
+      ) : null}
+    </span>
   );
 }
 

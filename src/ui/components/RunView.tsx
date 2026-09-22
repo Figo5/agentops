@@ -18,28 +18,32 @@ import type { AgentOpsClient, Bootstrap } from "../api.js";
 import { useAction, useRunDetail } from "../hooks.js";
 import {
   approvalDecisionOptions,
+  approvalEvidenceView,
   approvalGateLabel,
   buildStageRail,
   eventsForRun,
   formatTimestamp,
   isTerminalRun,
   mergeEvents,
+  pendingInputQuestion,
   relativeTime,
+  reviewCycleView,
   statusLabel,
   text,
   validateCancelReason,
   validateDecision,
   validateRetryForm,
 } from "../view-model.js";
+import { ApprovalPanel } from "./ApprovalPanel.js";
 import { AttemptDetail } from "./AttemptDetail.js";
 import {
   Button,
   Card,
+  ClampedText,
   ErrorBox,
   Field,
   Loading,
   Notice,
-  Pill,
   StatusPill,
   TextArea,
 } from "./Bits.js";
@@ -94,7 +98,9 @@ export function RunView({
     null,
   );
   const [logsOpen, setLogsOpen] = useState(true);
-  const [instruction, setInstruction] = useState("");
+  const [selectedDecision, setSelectedDecision] =
+    useState<ApprovalDecision | null>(null);
+  const [decisionReason, setDecisionReason] = useState("");
   const [retryReason, setRetryReason] = useState("");
   const [retryInstruction, setRetryInstruction] = useState("");
   const [cancelReason, setCancelReason] = useState("");
@@ -124,7 +130,8 @@ export function RunView({
   useEffect(() => {
     setSelectedStageKey(null);
     setSelectedAttemptId(null);
-    setInstruction("");
+    setSelectedDecision(null);
+    setDecisionReason("");
     setRetryReason("");
     setRetryInstruction("");
     setCancelReason("");
@@ -183,8 +190,22 @@ export function RunView({
     );
   }
 
+  const cycle = reviewCycleView(run);
+  const evidence = approvalEvidenceView({
+    approval: pending,
+    reviewCycle: cycle,
+    verdicts: detail.data.reviewVerdicts,
+    attempts: detail.data.attempts,
+    tests: detail.data.tests,
+    agents: detail.data.agents,
+  });
+  const question = pendingInputQuestion({
+    events: mergedEvents,
+    attempts: detail.data.attempts,
+  });
+
   const submitDecision = async (decision: ApprovalDecision) => {
-    const result = validateDecision(decision, instruction, decisions);
+    const result = validateDecision(decision, decisionReason, decisions);
     if (!result.ok) {
       setFormError(Object.values(result.errors).join(" · "));
       return;
@@ -196,7 +217,10 @@ export function RunView({
         instruction: result.value.instruction,
       }),
     );
-    if (updated) setInstruction("");
+    if (updated) {
+      setDecisionReason("");
+      setSelectedDecision(null);
+    }
   };
 
   const submitRetry = async () => {
@@ -309,7 +333,7 @@ export function RunView({
         <Card
           title={
             <>
-              {run.goal}
+              <ClampedText text={run.goal} className="goal-title" />
               <StatusPill status={run.status} />
             </>
           }
@@ -341,9 +365,11 @@ export function RunView({
                 {run.templateId} v{run.templateVersion}
               </b>
             </span>
-            <span>
-              review cycle <b>{run.reviewCycle}</b> / max{" "}
-              <b>{run.policy.maxReviewCycles}</b>
+            <span title={`${cycle.used} fix cycle(s) used of ${cycle.max}`}>
+              <b>{cycle.label}</b>
+              {cycle.used > 0
+                ? ` · fixes run ${cycle.used}`
+                : " · no fix cycle"}
             </span>
             <span>
               git policy <b>{run.policy.gitPolicy}</b>
@@ -402,68 +428,76 @@ export function RunView({
               </div>
             ) : null}
 
-            {pending ? (
-              <div className="stack">
-                <div className="approval-actions">
-                  <Field
-                    label="Next instruction (optional for approval)"
-                    htmlFor="approval-instruction"
-                    help="Required when rejecting or requesting changes."
-                  >
-                    <TextArea
-                      id="approval-instruction"
-                      rows={2}
-                      value={instruction}
-                      onChange={setInstruction}
-                      placeholder="Add an instruction or reason…"
-                    />
-                  </Field>
-                  <div className="row">
-                    {decisions.map((option) => (
-                      <div key={option.decision} className="decision-option">
-                        <Button
-                          variant={
-                            option.decision === "approve"
-                              ? "success"
-                              : option.decision === "reject"
-                                ? "danger"
-                                : "default"
-                          }
-                          size="sm"
-                          onClick={() => void submitDecision(option.decision)}
-                          disabled={action.pending}
-                        >
-                          {option.label}
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            {pending && evidence ? (
+              <ApprovalPanel
+                evidence={evidence}
+                options={decisions}
+                selected={selectedDecision}
+                reason={decisionReason}
+                busy={action.pending}
+                error={formError}
+                onSelect={setSelectedDecision}
+                onReasonChange={setDecisionReason}
+                onCancel={() => {
+                  setSelectedDecision(null);
+                  setDecisionReason("");
+                  setFormError(null);
+                }}
+                onConfirm={(decision) => void submitDecision(decision)}
+              />
             ) : null}
 
             {run.status === "WAITING_INPUT" ? (
-              <div className="stack">
-                <Field
-                  label="Operator input"
-                  htmlFor="operator-input"
-                  help="Delivered to the waiting attempt as its next input."
-                >
-                  <TextArea
-                    id="operator-input"
-                    rows={3}
-                    value={operatorInput}
-                    onChange={setOperatorInput}
-                  />
-                </Field>
-                <div>
-                  <Button
-                    variant="primary"
-                    onClick={() => void submitInput()}
-                    disabled={action.pending || !operatorInput.trim()}
+              <div className="operator-input">
+                <div className="operator-question stack--tight">
+                  <b>What the agent is asking</b>
+                  {question.text ? (
+                    <p className="wrap-anywhere">{question.text}</p>
+                  ) : (
+                    <p className="faint small">
+                      The agent asked for input but no question text was
+                      persisted. Read the attempt output before answering.
+                    </p>
+                  )}
+                  <p className="faint small wrap-anywhere">
+                    Source:{" "}
+                    {question.source === "input.requested"
+                      ? "persisted input request"
+                      : question.source === "agent.waiting"
+                        ? "agent waiting event"
+                        : question.source === "attempt summary"
+                          ? "waiting attempt summary"
+                          : "nothing recorded"}
+                    {question.attemptNumber !== null
+                      ? ` · attempt #${question.attemptNumber}`
+                      : ""}
+                    {question.stageKey ? ` · stage ${question.stageKey}` : ""}
+                    {question.at ? ` · ${formatTimestamp(question.at)}` : ""}
+                  </p>
+                </div>
+                <div className="stack">
+                  <Field
+                    label="Your answer"
+                    htmlFor="operator-input"
+                    help="Delivered to the waiting attempt as its next input."
                   >
-                    {action.pending ? "Sending…" : "Send input"}
-                  </Button>
+                    <TextArea
+                      id="operator-input"
+                      rows={3}
+                      value={operatorInput}
+                      onChange={setOperatorInput}
+                      ariaLabel="Operator input"
+                    />
+                  </Field>
+                  <div>
+                    <Button
+                      variant="primary"
+                      onClick={() => void submitInput()}
+                      disabled={action.pending || !operatorInput.trim()}
+                    >
+                      {action.pending ? "Sending…" : "Send input"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : null}

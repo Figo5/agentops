@@ -40,10 +40,13 @@ import {
   Pill,
   Select,
   StatusPill,
+  TabPanel,
   Tabs,
   TextArea,
   TextInput,
 } from "./Bits.js";
+
+const PROJECT_TABS_ID = "project-sections";
 
 function formFromProject(project: ProjectRecord): ProjectForm {
   return {
@@ -595,6 +598,7 @@ export function ProjectsView({
             }
           >
             <Tabs
+              idBase={PROJECT_TABS_ID}
               label="Project sections"
               active={tab}
               onChange={setTab}
@@ -609,7 +613,11 @@ export function ProjectsView({
                 { id: "edit", label: "Edit" },
               ]}
             />
-            {tab === "overview" ? (
+            <TabPanel
+              idBase={PROJECT_TABS_ID}
+              id="overview"
+              selected={tab === "overview"}
+            >
               <div className="stack">
                 <KeyValue
                   rows={[
@@ -646,8 +654,12 @@ export function ProjectsView({
                   processes inherit your OS privileges.
                 </Notice>
               </div>
-            ) : null}
-            {tab === "verification" ? (
+            </TabPanel>
+            <TabPanel
+              idBase={PROJECT_TABS_ID}
+              id="verification"
+              selected={tab === "verification"}
+            >
               <div className="stack">
                 {selected.verificationCommands.length === 0 ? (
                   <Notice tone="warn">
@@ -690,8 +702,12 @@ export function ProjectsView({
                   existing run's policy.
                 </p>
               </div>
-            ) : null}
-            {tab === "runs" ? (
+            </TabPanel>
+            <TabPanel
+              idBase={PROJECT_TABS_ID}
+              id="runs"
+              selected={tab === "runs"}
+            >
               <div className="stack">
                 {runs.length === 0 ? (
                   <p className="faint small">
@@ -732,15 +748,19 @@ export function ProjectsView({
                   </div>
                 )}
               </div>
-            ) : null}
-            {tab === "edit" ? (
+            </TabPanel>
+            <TabPanel
+              idBase={PROJECT_TABS_ID}
+              id="edit"
+              selected={tab === "edit"}
+            >
               <ProjectEditor
                 client={client}
                 projects={projects}
                 refreshBootstrap={refreshBootstrap}
                 editing={selected}
               />
-            ) : null}
+            </TabPanel>
           </Card>
         ) : (
           <EmptyState title="No project selected">

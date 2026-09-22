@@ -1140,6 +1140,82 @@ button.list__row:hover {
   border: 0;
 }
 
+/* Skip link: off-screen until it is focused by the keyboard. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: 20;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13.5px;
+  text-decoration: none;
+  transition: top 120ms ease;
+}
+.skip-link:focus {
+  top: 8px;
+}
+
+/*
+ * Long-content containment: raw prompts, JSON payloads, ids, hashes and
+ * unbroken tokens must wrap or scroll inside their own box instead of
+ * stretching the layout or pushing controls off screen.
+ */
+.card__head,
+.card__head h2,
+.card__head h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.statline span,
+.kv dt,
+.kv dd,
+.field__help,
+.notice,
+.banner,
+.empty,
+.list__meta,
+.rail__name,
+.rail__sub,
+.tab,
+.card__hint,
+.card__hint *,
+p,
+li,
+dd,
+dt {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.table {
+  table-layout: auto;
+  overflow-wrap: anywhere;
+}
+.table td,
+.table th {
+  overflow-wrap: anywhere;
+}
+.diff__line,
+.terminal__line {
+  min-width: 0;
+}
+.diff__line > *,
+.terminal__line > * {
+  min-width: 0;
+}
+.code,
+.terminal {
+  max-width: 100%;
+}
+.field input,
+.field textarea,
+.field select {
+  max-width: 100%;
+}
+
 /* ------------------------------- responsive ---------------------------- */
 
 @media (max-width: 1240px) {
@@ -1232,10 +1308,6 @@ body,
 .checkpoint-list .rail__button > span {
   display: block;
 }
-.decision-option {
-  display: flex;
-  align-items: center;
-}
 .grid--home {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -1262,20 +1334,60 @@ body,
 .run-constraints summary {
   cursor: pointer;
 }
-.approval-actions {
+.approval-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 20px;
-  align-items: center;
+  gap: 12px;
 }
-.approval-actions textarea {
-  min-height: 42px;
-  height: 42px;
+.approval-evidence {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
 }
-@media (max-width: 700px) {
-  .approval-actions {
+.approval-evidence p {
+  margin: 0;
+}
+/* Two-line clamp for long goals and other free-form headings. */
+.clamp {
+  display: block;
+  min-width: 0;
+}
+.clamp__text {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.clamp__text--two {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.clamp__toggle {
+  margin-top: 6px;
+}
+.card__head h2 .clamp {
+  font-size: inherit;
+}
+/* The agent's question sits next to the input it belongs to. */
+.operator-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.operator-question {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+}
+.operator-question p {
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .operator-input {
     grid-template-columns: 1fr;
-    gap: 8px;
   }
 }
 

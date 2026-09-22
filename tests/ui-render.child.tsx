@@ -26,10 +26,17 @@ import type {
 import { buildStagePlan, builtinTemplate } from "../src/core/templates.js";
 import type { Bootstrap } from "../src/ui/api.js";
 import { App } from "../src/ui/App.js";
+import { ApprovalPanel } from "../src/ui/components/ApprovalPanel.js";
+import { ClampedText, TabPanel, Tabs } from "../src/ui/components/Bits.js";
 import { Home } from "../src/ui/components/Home.js";
 import { RunRow } from "../src/ui/components/RunRow.js";
 import { StageRail } from "../src/ui/components/StageRail.js";
-import { buildStageRail } from "../src/ui/view-model.js";
+import {
+  approvalDecisionOptions,
+  approvalEvidenceView,
+  buildStageRail,
+  reviewCycleView,
+} from "../src/ui/view-model.js";
 
 const plan = buildStagePlan(builtinTemplate("implement-review")!);
 
@@ -286,7 +293,7 @@ check("the stage rail renders the review branch as a branch", () => {
   assert.match(markup, /Structured review/);
   assert.match(markup, /Structured review: fixes/);
   assert.match(markup, /Structured review: re-verification/);
-  assert.match(markup, /review cycle 1\/2 · active/);
+  assert.match(markup, /fixes from review cycle 1 of 2 · active/);
   assert.match(markup, /WAITING FOR YOU/);
   assert.match(markup, /2\/6 non-conditional stages completed/);
   assert.match(
@@ -344,9 +351,295 @@ check("the app shell renders its navigation and loading state", () => {
     assert.match(markup, /href="#\/agents" aria-current="page"/);
     // No version is claimed before the bootstrap payload arrives.
     assert.match(markup, /vunavailable/);
+    // Keyboard users can bypass the navigation, and the skip target exists.
+    assert.match(markup, /class="skip-link" href="#main-content"/);
+    assert.match(markup, /id="main-content" tabindex="-1"/);
   } finally {
     globals.window = previous;
   }
+});
+
+check("tabs use a roving tabindex and every aria-controls has a panel", () => {
+  const tabs = [
+    { id: "prompt", label: "Prompt" },
+    { id: "output", label: "Output", count: 2 },
+    { id: "review", label: "Review" },
+  ];
+  const markup = renderToStaticMarkup(
+    createElement(
+      "div",
+      null,
+      createElement(Tabs, {
+        tabs,
+        active: "output",
+        onChange: () => undefined,
+        label: "Attempt 1 sections",
+        idBase: "attempt-sections",
+      }),
+      tabs.map((tab) =>
+        createElement(TabPanel, {
+          key: tab.id,
+          idBase: "attempt-sections",
+          id: tab.id,
+          selected: tab.id === "output",
+          children: createElement("p", null, `${tab.label} body`),
+        }),
+      ),
+    ),
+  );
+  assert.match(markup, /role="tablist" aria-label="Attempt 1 sections"/);
+  // Exactly one tab is in the tab order, and it is the selected one.
+  assert.equal(
+    (markup.match(/role="tab"[^>]*tabindex="0"/g) ?? []).length,
+    1,
+    "one roving tab stop among the tabs",
+  );
+  assert.equal((markup.match(/role="tab"[^>]*tabindex="-1"/g) ?? []).length, 2);
+  assert.match(
+    markup,
+    /id="attempt-sections-output"[^>]*aria-selected="true"[^>]*aria-controls="attempt-sections-output-panel"[^>]*tabindex="0"/,
+  );
+  // Every aria-controls target exists as a tabpanel that points back.
+  for (const tab of tabs) {
+    assert.match(
+      markup,
+      new RegExp(`role="tabpanel" id="attempt-sections-${tab.id}-panel"`),
+    );
+    assert.match(
+      markup,
+      new RegExp(`aria-labelledby="attempt-sections-${tab.id}"`),
+    );
+  }
+  // Inactive panels are hidden, the selected one is not.
+  assert.match(
+    markup,
+    /id="attempt-sections-output-panel" aria-labelledby[^>]*>/,
+  );
+  assert.match(
+    markup,
+    /role="tabpanel" id="attempt-sections-review-panel" aria-labelledby="attempt-sections-review" hidden=""/,
+  );
+});
+
+check(
+  "the goal is clamped to two lines with an explicit full-text control",
+  () => {
+    const long =
+      "Implement the full review loop for the greeting fixture including retries, overrides and final acceptance";
+    const markup = renderToStaticMarkup(
+      createElement(ClampedText, { text: long }),
+    );
+    assert.match(markup, /class="clamp__text clamp__text--two"/);
+    assert.match(markup, new RegExp(`title="${long}"`));
+    assert.match(markup, new RegExp(long));
+  },
+);
+
+check(
+  "approval evidence precedes the decision buttons and gates the reason",
+  () => {
+    const approval = {
+      id: "ap1",
+      runId: "run-1",
+      stageKey: "review",
+      taskId: null,
+      attemptId: null,
+      gate: "review_reject" as const,
+      status: "PENDING" as const,
+      allowed: ["override", "retry", "reject"] as const,
+      reason: "reviewer rejected the work: human decision required",
+      requestedAt: "2026-09-22T11:00:00.000Z",
+      decision: null,
+      instruction: null,
+      actor: null,
+      decidedAt: null,
+    };
+    const options = approvalDecisionOptions({
+      ...approval,
+      allowed: [...approval.allowed],
+    });
+    const evidence = approvalEvidenceView({
+      approval,
+      reviewCycle: reviewCycleView({
+        reviewCycle: 2,
+        policy: { maxReviewCycles: 2 },
+      }),
+      verdicts: [
+        {
+          id: "rev-1",
+          runId: "run-1",
+          taskId: "task-review",
+          attemptId: "attempt-1",
+          stageKey: "review",
+          cycle: 1,
+          valid: true,
+          validationErrors: [],
+          verdict: "REJECT",
+          summary: "the parser drops empty input",
+          issues: [
+            {
+              severity: "blocking",
+              description: "empty input throws",
+              path: "src/parser.ts",
+              line: 42,
+            },
+          ],
+          confidence: null,
+          reviewer: null,
+          raw: "{}",
+          createdAt: "2026-09-22T11:00:00.000Z",
+        },
+      ],
+      attempts: [
+        {
+          id: "attempt-1",
+          attemptNumber: 1,
+          stageKey: "review",
+          agentId: "agt_reviewer",
+          reviewVerdictId: "rev-1",
+          verification: {
+            status: "passed",
+            mode: "commands",
+            commandCount: 1,
+            counts: null,
+            summary: "1 command exited 0",
+            reason: null,
+          },
+        },
+      ],
+      tests: [
+        {
+          attemptId: "attempt-1",
+          framework: "node:test",
+          passed: 7,
+          failed: 0,
+          skipped: 0,
+          total: 7,
+          parsedConfidently: true,
+          createdAt: "2026-09-22T11:00:01.000Z",
+        },
+      ],
+      agents: [{ id: "agt_reviewer", name: "Claude Opus 4.8" }],
+    })!;
+
+    const idle = renderToStaticMarkup(
+      ApprovalPanel({
+        evidence,
+        options,
+        selected: null,
+        reason: "",
+        busy: false,
+        onSelect: () => undefined,
+        onReasonChange: () => undefined,
+        onCancel: () => undefined,
+        onConfirm: () => undefined,
+      }) as never,
+    );
+    // The evidence is rendered before any decision button.
+    const evidenceAt = idle.indexOf("Approval evidence");
+    const firstButtonAt = idle.indexOf("<button");
+    assert.ok(evidenceAt >= 0, "evidence block is rendered");
+    assert.ok(
+      evidenceAt < firstButtonAt,
+      `evidence (${evidenceAt}) must precede the decision buttons (${firstButtonAt})`,
+    );
+    assert.match(idle, /Review rejected — human decision required/);
+    assert.match(idle, /review cycle 2 of 2/);
+    assert.match(idle, /Claude Opus 4\.8/);
+    assert.match(idle, /empty input throws/);
+    assert.match(idle, /src\/parser\.ts:42/);
+    // Real payload shape: the verdict omits `reviewer`, the counts are null in
+    // the verification record but confident in the normalized test run.
+    assert.match(idle, /Claude Opus 4\.8/);
+    assert.match(idle, /from the reviewer attempt/);
+    assert.match(idle, /Command passed · 7\/7 passed/);
+    assert.match(idle, /counts from the normalized test run node:test/);
+    assert.match(idle, /Override rejection and continue/);
+    assert.ok(
+      !/Reject with override/.test(idle),
+      "the 'Reject with override' label is gone",
+    );
+    // No reason field until a reason-requiring decision is selected.
+    assert.ok(
+      !/id="approval-reason"/.test(idle),
+      "the reason textarea is hidden until a decision is selected",
+    );
+    assert.ok(!/Confirm /.test(idle));
+
+    const rejecting = renderToStaticMarkup(
+      ApprovalPanel({
+        evidence,
+        options,
+        selected: "reject",
+        reason: "",
+        busy: false,
+        onSelect: () => undefined,
+        onReasonChange: () => undefined,
+        onCancel: () => undefined,
+        onConfirm: () => undefined,
+      }) as never,
+    );
+    assert.match(rejecting, /id="approval-reason"/);
+    assert.match(rejecting, /Reason for rejecting/);
+    assert.match(rejecting, /Confirm Reject/);
+    // The confirm button stays disabled while the mandatory reason is empty.
+    assert.match(
+      rejecting,
+      /<button type="button" class="btn btn--danger btn--sm" disabled="">Confirm Reject/,
+    );
+  },
+);
+
+check("the final acceptance gate offers Accept run", () => {
+  const approval = {
+    id: "ap2",
+    runId: "run-1",
+    stageKey: "final",
+    taskId: null,
+    attemptId: null,
+    gate: "final_acceptance" as const,
+    status: "PENDING" as const,
+    allowed: ["approve", "reject"] as const,
+    reason: null,
+    requestedAt: "2026-09-22T12:00:00.000Z",
+    decision: null,
+    instruction: null,
+    actor: null,
+    decidedAt: null,
+  };
+  const options = approvalDecisionOptions({
+    ...approval,
+    allowed: [...approval.allowed],
+  });
+  const evidence = approvalEvidenceView({
+    approval,
+    reviewCycle: reviewCycleView({
+      reviewCycle: 1,
+      policy: { maxReviewCycles: 2 },
+    }),
+    verdicts: [],
+    attempts: [],
+  })!;
+  const markup = renderToStaticMarkup(
+    ApprovalPanel({
+      evidence,
+      options,
+      selected: null,
+      reason: "",
+      busy: false,
+      onSelect: () => undefined,
+      onReasonChange: () => undefined,
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+    }) as never,
+  );
+  assert.match(markup, />Accept run</);
+  assert.ok(!/>Approve</.test(markup), "no generic Approve at the final gate");
+  assert.match(markup, /No review verdict is recorded for this stage/);
+  assert.match(markup, /No verification outcome is recorded/);
+  assert.match(markup, />Reject</);
+  // Accepting takes no reason, so it never reveals the reason textarea.
+  assert.ok(!/id="approval-reason"/.test(markup));
 });
 
 let failures = 0;
