@@ -50,7 +50,7 @@ import {
   reviewerProvenanceLabel,
   statusLabel,
   text,
-  verdictLabel,
+  verdictOutcomeLabel,
   verdictTone,
   verdictActionWord,
   verificationCountsLabel,
@@ -123,7 +123,8 @@ export function runStateView(input: {
       return {
         headline: "Cancelled",
         tone: "neutral",
-        detail: "This run was terminated by an operator and cannot be restarted.",
+        detail:
+          "This run was terminated by an operator and cannot be restarted.",
       };
     case "FAILED":
       return {
@@ -147,8 +148,15 @@ export function runStateView(input: {
       };
     case "WAITING_APPROVAL": {
       if (input.gate === "final_acceptance")
-        return { headline: "Ready for your review", tone: "accent", detail: null };
-      if (input.gate === "review_reject" || input.gate === "review_cycle_exhausted")
+        return {
+          headline: "Ready for your review",
+          tone: "accent",
+          detail: null,
+        };
+      if (
+        input.gate === "review_reject" ||
+        input.gate === "review_cycle_exhausted"
+      )
         return { headline: "Changes requested", tone: "warn", detail: null };
       return {
         headline: "Waiting for your decision",
@@ -157,7 +165,11 @@ export function runStateView(input: {
       };
     }
     case "RUNNING":
-      return { headline: activeWorkSentence(input.stage, input.agentName), tone: "active", detail: null };
+      return {
+        headline: activeWorkSentence(input.stage, input.agentName),
+        tone: "active",
+        detail: null,
+      };
     case "DRAFT":
       return {
         headline: "Draft — not started",
@@ -190,11 +202,12 @@ export function activeWorkSentence(
       : "Verification is running";
   if (kind === "review")
     return agentName ? `${agentName} is reviewing` : "Review is running";
-  if (kind === "final_approval")
-    return "Waiting for your decision";
+  if (kind === "final_approval") return "Waiting for your decision";
   const verb = stage && planningStage(stage) ? "planning" : "implementing";
   if (agentName) return `${agentName} is ${verb}`;
-  return verb === "planning" ? "Planning is running" : "Implementation is running";
+  return verb === "planning"
+    ? "Planning is running"
+    : "Implementation is running";
 }
 
 /* ------------------------------------------------------------------ */
@@ -280,9 +293,17 @@ const WAITING_STAGE_STATUSES = new Set([
 function milestoneState(stages: readonly MilestoneStageView[]): MilestoneState {
   if (stages.some((stage) => FAILED_STAGE_STATUSES.has(stage.status)))
     return "failed";
-  if (stages.some((stage) => stage.isCurrent || WAITING_STAGE_STATUSES.has(stage.status)))
+  if (
+    stages.some(
+      (stage) => stage.isCurrent || WAITING_STAGE_STATUSES.has(stage.status),
+    )
+  )
     return "current";
-  if (stages.every((stage) => stage.status === "COMPLETED" || stage.status === "SKIPPED"))
+  if (
+    stages.every(
+      (stage) => stage.status === "COMPLETED" || stage.status === "SKIPPED",
+    )
+  )
     return "complete";
   return "wait";
 }
@@ -368,8 +389,7 @@ export function buildRunMilestones(
     .filter((entry) => entry.kind === "verify" && entry.loop === null)
     .map((entry) => entry.key);
   const workEntries = beforeFinal.filter(
-    (entry) =>
-      entry.kind !== "verify" && !reviewKeys.includes(entry.key),
+    (entry) => entry.kind !== "verify" && !reviewKeys.includes(entry.key),
   );
   const planKeys: string[] = [];
   const buildKeys: string[] = [];
@@ -516,18 +536,24 @@ export const EVENT_SEVERITY_FILTERS = [
 ] as const;
 export type EventSeverityFilter = (typeof EVENT_SEVERITY_FILTERS)[number];
 
-export const EVENT_SEVERITY_FILTER_LABELS: Record<EventSeverityFilter, string> = {
-  everything: "Everything",
-  attention: "Needs attention",
-  output: "Output only",
-};
+export const EVENT_SEVERITY_FILTER_LABELS: Record<EventSeverityFilter, string> =
+  {
+    everything: "Everything",
+    attention: "Needs attention",
+    output: "Output only",
+  };
 
 /** Words that mark an event as something an operator has to look at. */
 const ATTENTION_PATTERN =
   /fail|error|reject|interrupt|cancel|blocked|unavailable|exhaust|invalid|timeout|denied|crash|missing/i;
 
 /** Categories that are background record-keeping rather than progress. */
-const DETAIL_CATEGORIES = new Set(["system", "project", "snapshot", "artifact"]);
+const DETAIL_CATEGORIES = new Set([
+  "system",
+  "project",
+  "snapshot",
+  "artifact",
+]);
 
 /** Event types whose payload is verbatim agent output, not run progress. */
 const OUTPUT_EVENT_PATTERN =
@@ -646,12 +672,16 @@ function stageNameFor(event: EventRecord, context: ActivityContext): string {
   return context.stageNames?.get(event.stageKey) ?? "the stage";
 }
 
-function agentNameFor(event: EventRecord, context: ActivityContext): string | null {
+function agentNameFor(
+  event: EventRecord,
+  context: ActivityContext,
+): string | null {
   const agentId = event.payload?.["agentId"];
   if (typeof agentId === "string" && agentId)
     return context.agentNames?.get(agentId) ?? null;
   // Agent events carry no agent id; the attempt they belong to does.
-  if (event.attemptId) return context.attemptAgents?.get(event.attemptId) ?? null;
+  if (event.attemptId)
+    return context.attemptAgents?.get(event.attemptId) ?? null;
   return null;
 }
 
@@ -706,7 +736,9 @@ export function activitySentence(
     case "input.supplied":
       return "You supplied input";
     case "input.delivery_failed":
-      return reason ? `Input could not be delivered: ${reason}` : "Input could not be delivered";
+      return reason
+        ? `Input could not be delivered: ${reason}`
+        : "Input could not be delivered";
     case "run.completed":
       return "Run completed";
     case "run.failed":
@@ -796,7 +828,10 @@ function reviewActionWord(verdict: string | null): string {
  */
 type ActivityAction = "start" | "finish" | "fail" | "interrupt" | "wait";
 
-const ACTIVITY_ACTIONS: Record<string, { action: ActivityAction; rank: number }> = {
+const ACTIVITY_ACTIONS: Record<
+  string,
+  { action: ActivityAction; rank: number }
+> = {
   "agent.started": { action: "start", rank: 3 },
   "stage.started": { action: "start", rank: 2 },
   "stage.attempt_started": { action: "start", rank: 1 },
@@ -1004,7 +1039,8 @@ export function changedFilesView(input: {
   const fromStat =
     stat === null
       ? null
-      : (stat.filesChanged ?? (stat.files.length > 0 ? stat.files.length : null));
+      : (stat.filesChanged ??
+        (stat.files.length > 0 ? stat.files.length : null));
   const count = paths.size > 0 ? paths.size : fromStat;
   if (count === null)
     return { count: null, label: "Changed files UNKNOWN", detail: null };
@@ -1166,7 +1202,9 @@ export function verificationHistory(input: {
 
   const relevant = entries.filter(
     (entry) =>
-      entry.status !== UNKNOWN || entry.commands.length > 0 || entry.tests.length > 0,
+      entry.status !== UNKNOWN ||
+      entry.commands.length > 0 ||
+      entry.tests.length > 0,
   );
   relevant.sort((a, b) => {
     const left = a.recordedAt ?? "";
@@ -1271,7 +1309,7 @@ export function reviewHistory(input: {
         stageKey: verdict.stageKey,
         stageName: stageNames.get(verdict.stageKey) ?? verdict.stageKey,
         cycle: verdict.cycle,
-        label: verdictLabel(verdict.verdict, verdict.valid),
+        label: verdictOutcomeLabel(verdict.verdict, verdict.valid),
         kind: verdict.verdict,
         tone: verdictTone(verdict.verdict),
         valid: verdict.valid,
@@ -1415,7 +1453,11 @@ export function decisionFacts(input: {
   const newest = sorted[sorted.length - 1] ?? null;
   const changed = changedFilesView({ snapshot: newest });
   return [
-    { label: changed.label, tone: changed.count === null ? "muted" : "neutral", detail: changed.detail },
+    {
+      label: changed.label,
+      tone: changed.count === null ? "muted" : "neutral",
+      detail: changed.detail,
+    },
     checksFact(input.evidence),
     blockerFact(input.evidence),
   ];

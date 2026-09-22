@@ -906,7 +906,11 @@ test("review history keeps every finding with its path and severity", () => {
     history.map((entry) => entry.id),
     ["rev-2", "rev-1"],
   );
-  assert.equal(history[0]!.label, "Approve");
+  // A recorded verdict reads as an outcome; the raw enum stays on `kind`.
+  assert.equal(history[0]!.label, "Approved");
+  assert.equal(history[0]!.kind, "APPROVE");
+  assert.equal(history[1]!.label, "Changes requested");
+  assert.equal(history[1]!.kind, "REJECT");
   assert.equal(history[0]!.blockers, 0);
   assert.equal(history[0]!.suggestions, 2);
   assert.equal(history[0]!.reviewer, "Claude Opus 4.8");
@@ -2125,7 +2129,8 @@ test("approval evidence is read from the persisted record", () => {
   assert.equal(evidence.gateLabel, "Review rejected — human decision required");
   assert.equal(evidence.stageKey, "review");
   assert.equal(evidence.cycle.label, "review cycle 2 of 2");
-  assert.equal(evidence.verdict!.label, "Reject");
+  assert.equal(evidence.verdict!.label, "Changes requested");
+  assert.equal(evidence.verdict!.kind, "REJECT");
   assert.equal(evidence.verdict!.tone, "danger");
   assert.equal(evidence.verdict!.stageKey, "review");
   // The real payloads omit `reviewer`, but the verdict records the attempt that

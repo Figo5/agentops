@@ -186,8 +186,8 @@ function EntryBody({ entry }: { entry: VerificationEntryView }) {
         {entry.testsHidden > 0 ? (
           <p className="faint small">
             {formatCount(entry.testsHidden)} earlier parsed test record
-            {entry.testsHidden === 1 ? "" : "s"} for this attempt are folded; the
-            counts above stay this attempt's newest record.
+            {entry.testsHidden === 1 ? "" : "s"} for this attempt are folded;
+            the counts above stay this attempt's newest record.
           </p>
         ) : null}
       </Disclosure>

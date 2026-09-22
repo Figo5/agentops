@@ -11,14 +11,7 @@ import { useMemo } from "react";
 import type { RunDetailResponse } from "../api.js";
 import { formatTimestamp } from "../view-model.js";
 import { reviewHistory, type ReviewEntryView } from "../run-view.js";
-import {
-  Card,
-  CodeBlock,
-  Disclosure,
-  KeyValue,
-  Notice,
-  Pill,
-} from "./Bits.js";
+import { Card, CodeBlock, Disclosure, KeyValue, Notice, Pill } from "./Bits.js";
 
 function FindingList({
   label,
@@ -50,7 +43,9 @@ function FindingList({
 }
 
 function EntryBody({ entry }: { entry: ReviewEntryView }) {
-  const blockers = entry.issues.filter((issue) => issue.disposition === "blocker");
+  const blockers = entry.issues.filter(
+    (issue) => issue.disposition === "blocker",
+  );
   const suggestions = entry.issues.filter(
     (issue) => issue.disposition === "suggestion",
   );
@@ -71,7 +66,8 @@ function EntryBody({ entry }: { entry: ReviewEntryView }) {
 
       {!entry.valid ? (
         <Notice tone="warn">
-          This verdict could not be used: {entry.validationErrors.join("; ") || "no detail reported"}
+          This verdict could not be used:{" "}
+          {entry.validationErrors.join("; ") || "no detail reported"}
         </Notice>
       ) : null}
 
@@ -97,7 +93,11 @@ function EntryBody({ entry }: { entry: ReviewEntryView }) {
             ["Review stage", entry.stageName],
             ["Stage key", <span className="mono">{entry.stageKey}</span>],
             ["Review cycle", String(entry.cycle)],
-            ["Verdict", entry.label],
+            ["Outcome", entry.label],
+            [
+              "Structured verdict",
+              <span className="mono">{entry.kind ?? "none recorded"}</span>,
+            ],
             ["Payload usable", entry.valid ? "yes" : "no"],
             [
               "Validation errors",
@@ -157,10 +157,7 @@ export function ReviewPanel({ detail }: { detail: RunDetailResponse }) {
       </Card>
 
       {prior.length > 0 ? (
-        <Card
-          title={`Earlier reviews (${prior.length})`}
-          hint="Every earlier verdict this run recorded, newest first."
-        >
+        <Card title={`Earlier reviews (${prior.length})`}>
           <div className="stack--tight">
             {prior.map((entry) => (
               <Disclosure

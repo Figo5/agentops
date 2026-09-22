@@ -33,7 +33,7 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
 
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.status, 0, `render harness failed:\n${output}`);
-  assert.match(output, /30\/30 render checks passed/);
+  assert.match(output, /31\/31 render checks passed/);
   assert.match(output, /ok - first-run empty state offers one useful action/);
   assert.match(
     output,
@@ -130,5 +130,10 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
   assert.match(
     output,
     /ok - the shell carries the settings route in its navigation/,
+  );
+  // Pass 6 polish.
+  assert.match(
+    output,
+    /ok - a failed run leads with the recorded reason, not a record table/,
   );
 });

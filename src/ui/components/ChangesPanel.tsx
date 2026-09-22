@@ -82,7 +82,9 @@ function CheckpointList({ detail }: { detail: RunDetailResponse }) {
                 <Pill tone={snapshot.dirty ? "warn" : "success"} dot={false}>
                   {view.dirtyLabel}
                 </Pill>
-                <span className="faint small">{formatTimestamp(snapshot.capturedAt)}</span>
+                <span className="faint small">
+                  {formatTimestamp(snapshot.capturedAt)}
+                </span>
               </span>
               <span className="faint small mono">
                 {view.branch} @ {view.head}
@@ -189,8 +191,9 @@ export function ChangesPanel({
     return (
       <div className="panel">
         <Notice tone="warn">
-          This project is registered with <span className="mono">vcs: none</span>
-          . No working-tree diff, checkpoint or branch policy is recorded for it.
+          This project is registered with{" "}
+          <span className="mono">vcs: none</span>. No working-tree diff,
+          checkpoint or branch policy is recorded for it.
         </Notice>
         <Card title="Recorded checkpoints">
           <CheckpointList detail={detail} />
@@ -228,11 +231,11 @@ export function ChangesPanel({
 
       <Disclosure summary="How to read this">
         <p className="faint small">
-          This is the project's {staged ? "staged (index)" : "working-tree"} diff
-          as git reports it right now. It is not the frozen state that was
+          This is the project's {staged ? "staged (index)" : "working-tree"}{" "}
+          diff as git reports it right now. It is not the frozen state that was
           reviewed, and it can change after the run stopped. The recorded
-          checkpoints below are the run's own snapshot, with the head, branch and
-          divergence that were captured at the time.
+          checkpoints below are the run's own snapshot, with the head, branch
+          and divergence that were captured at the time.
         </p>
       </Disclosure>
 

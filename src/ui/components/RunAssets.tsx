@@ -23,7 +23,11 @@ import {
 } from "../view-model.js";
 import { Button, ErrorBox, Field, KeyValue, Pill, TextInput } from "./Bits.js";
 
-export function ArtifactList({ artifacts }: { artifacts: readonly ArtifactRecord[] }) {
+export function ArtifactList({
+  artifacts,
+}: {
+  artifacts: readonly ArtifactRecord[];
+}) {
   if (artifacts.length === 0)
     return <p className="faint small">This run has no artifacts yet.</p>;
   return (
@@ -72,7 +76,9 @@ export function ArtifactRegistration({
       return;
     }
     setErrors({});
-    const created = await action.run((c) => c.registerArtifact(runId, result.value));
+    const created = await action.run((c) =>
+      c.registerArtifact(runId, result.value),
+    );
     if (created) setForm(EMPTY_ARTIFACT_FORM);
   };
 
@@ -139,8 +145,7 @@ export function MeasuredUsage({
     usage: usageView(attempt.usage, attempt.usageKnown),
   }));
   const known = rows.filter((row) => row.usage.known).length;
-  if (rows.length === 0)
-    return <p className="faint small">No attempts yet.</p>;
+  if (rows.length === 0) return <p className="faint small">No attempts yet.</p>;
   return (
     <div className="stack">
       <p className="faint small">

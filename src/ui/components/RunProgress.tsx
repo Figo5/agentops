@@ -7,11 +7,7 @@
  * (owning the review → fix → re-verification branch and every stage record) is
  * available under one collapsed `Workflow details` disclosure.
  */
-import {
-  classNames,
-  statusLabel,
-  type Tone,
-} from "../view-model.js";
+import { classNames, statusLabel, type Tone } from "../view-model.js";
 import {
   runTabLabel,
   type MilestoneState,

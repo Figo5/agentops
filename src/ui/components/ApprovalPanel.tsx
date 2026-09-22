@@ -170,9 +170,7 @@ export function ApprovalEvidenceDetails({
           <>
             <span className="faint small">
               Test rows for this attempt ({latestTests.length}
-              {testsHidden > 0
-                ? ` of ${latestTests.length + testsHidden}`
-                : ""}
+              {testsHidden > 0 ? ` of ${latestTests.length + testsHidden}` : ""}
               )
             </span>
             <ul className="stack--tight" style={{ margin: 0, paddingLeft: 18 }}>

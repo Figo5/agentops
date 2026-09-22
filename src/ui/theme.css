@@ -3011,6 +3011,15 @@ dt {
   font-weight: 550;
 }
 
+/* The recorded failure reason: the sheet's primary line, not a record table. */
+.run-sheet__reason {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .terminal--nowrap {
   white-space: pre;
   overflow-wrap: normal;

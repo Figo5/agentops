@@ -1096,6 +1096,33 @@ export function verdictLabel(
 }
 
 /**
+ * A recorded verdict in outcome language, for anything the operator reads.
+ *
+ * The reviewer's decision is a *result*: the run was approved, was approved with
+ * fixes, or changes were requested. The buttons that submit a decision keep
+ * their action verbs (`Approve`, `Reject`), and the raw structured verdict
+ * (`APPROVE` / `APPROVE_WITH_FIXES` / `REJECT`) stays available in the technical
+ * details next to the original review text.
+ */
+export function verdictOutcomeLabel(
+  verdict: ReviewVerdictKind | null,
+  valid = true,
+): string {
+  if (!verdict)
+    return valid ? "No structured verdict" : "Invalid verdict payload";
+  switch (verdict) {
+    case "APPROVE":
+      return "Approved";
+    case "APPROVE_WITH_FIXES":
+      return "Approved with fixes";
+    case "REJECT":
+      return "Changes requested";
+    default:
+      return verdictLabel(verdict, valid);
+  }
+}
+
+/**
  * Issues are grouped into the two dispositions an operator decides on:
  * `blocking` stops the run, everything else (major, minor, nit) is a
  * suggestion. The persisted severity word is preserved verbatim on the issue
@@ -1586,7 +1613,10 @@ export function approvalEvidenceView(input: {
     verdict:
       verdictRecord && identity
         ? {
-            label: verdictLabel(verdictRecord.verdict, verdictRecord.valid),
+            label: verdictOutcomeLabel(
+              verdictRecord.verdict,
+              verdictRecord.valid,
+            ),
             kind: verdictRecord.verdict,
             tone: verdictTone(verdictRecord.verdict),
             valid: verdictRecord.valid,
@@ -1654,7 +1684,7 @@ export function verdictActionWord(
     case "APPROVE":
       return "approved";
     case "APPROVE_WITH_FIXES":
-      return "approved with fixes required";
+      return "approved with fixes";
     case "REJECT":
       return "rejected";
     default:

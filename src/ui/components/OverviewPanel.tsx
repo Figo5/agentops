@@ -238,24 +238,32 @@ export function OverviewPanel({
         </section>
       ) : null}
 
-      <Card
-        title="Artifacts and usage"
-        hint="Every file this run references, and the measured usage of every attempt. Run-level: an artifact may belong to no single stage."
+      {/*
+        One quiet entry point for the run's assets. A run with nothing recorded
+        still needs the registration form reachable, so the disclosure is always
+        present — collapsed, and without an "(0)" count or an empty card heading
+        in front of it.
+      */}
+      <Disclosure
+        className="card disclosure--card"
+        summary={
+          detail.artifacts.length > 0
+            ? `Artifacts and usage (${detail.artifacts.length})`
+            : "Artifacts and usage"
+        }
       >
-        <Disclosure summary={`Artifacts (${detail.artifacts.length})`}>
-          <div className="stack">
-            <ArtifactList artifacts={detail.artifacts} />
-            <ArtifactRegistration
-              client={client}
-              runId={detail.run.id}
-              refresh={refreshDetail}
-            />
-          </div>
-        </Disclosure>
-        <Disclosure summary="Measured usage">
-          <MeasuredUsage attempts={detail.attempts} agents={detail.agents} />
-        </Disclosure>
-      </Card>
+        <div className="stack">
+          <ArtifactList artifacts={detail.artifacts} />
+          <ArtifactRegistration
+            client={client}
+            runId={detail.run.id}
+            refresh={refreshDetail}
+          />
+          <Disclosure summary="Measured usage">
+            <MeasuredUsage attempts={detail.attempts} agents={detail.agents} />
+          </Disclosure>
+        </div>
+      </Disclosure>
 
       <Disclosure
         summary={`Stage evidence${selectedStage ? ` — ${selectedStage.name}` : ""}`}
@@ -283,9 +291,8 @@ export function OverviewPanel({
                   <span className="faint small">
                     {stageLine(
                       stage,
-                      detail.agents.find(
-                        (agent) => agent.id === stage.agentId,
-                      )?.name ?? null,
+                      detail.agents.find((agent) => agent.id === stage.agentId)
+                        ?.name ?? null,
                     )}
                   </span>
                 </button>

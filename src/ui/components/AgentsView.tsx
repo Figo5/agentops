@@ -403,7 +403,7 @@ export function AgentsView({
 
   return (
     <div className="view view--wide">
-      <Card hint="Configured records. Whether a provider answers is only proven when a task actually runs.">
+      <Card hint="Tools the agents may use. Access is unchecked until a task actually runs.">
         {agents.length === 0 ? (
           <EmptyState title="No agents configured">
             <p>

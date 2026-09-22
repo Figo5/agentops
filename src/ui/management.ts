@@ -26,7 +26,7 @@ import {
   statusLabel,
   text,
   truncate,
-  verdictActionWord,
+  verdictOutcomeLabel,
   type Tone,
 } from "./view-model.js";
 
@@ -452,25 +452,26 @@ export function historyRowView(
 ): HistoryRowView {
   const now = context.now ?? Date.now();
   const verdict = run.lastReviewVerdict ?? null;
-  /** Past-tense human word: `Approved`, `Rejected`, `Approved with fixes required`. */
-  const verdictWord = verdict
-    ? verdictActionWord(verdict, true).replace(/^./, (c) => c.toUpperCase())
-    : null;
+  /** Past-tense outcome word: `Approved`, `Changes requested`, `Approved with fixes`. */
+  const verdictWord = verdict ? verdictOutcomeLabel(verdict, true) : null;
+  const outcomeWord = waitingStateLabel(run);
   /**
-   * The second half of the outcome only when it adds information: a recorded
-   * failure reason always does, a verdict does unless the run is already
-   * accepted (where `Completed · approved` would say the same thing twice).
+   * The second half of the outcome only when it adds information. A recorded
+   * failure reason always does. A verdict does *not* when the state word already
+   * says it: an accepted run is `Completed`, and a run waiting at the human
+   * acceptance gate already got past its reviewer — repeating `Approved` there
+   * would read as a second, contradictory state.
    */
   const showVerdict =
     verdictWord !== null &&
-    !(verdict === "APPROVE" && run.status === "COMPLETED");
+    !(verdict === "APPROVE" && run.status === "COMPLETED") &&
+    outcomeWord !== "Ready for final approval";
   const detail =
     run.status === "FAILED" && run.failureReason
       ? truncate(run.failureReason, 100)
       : showVerdict
         ? verdictWord
         : null;
-  const outcomeWord = waitingStateLabel(run);
   const outcomeParts = [outcomeWord];
   if (detail) outcomeParts.push(detail);
   const durationMs = runDurationMs(run);

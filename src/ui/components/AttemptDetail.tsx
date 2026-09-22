@@ -31,7 +31,7 @@ import {
   testCountsLabel,
   text,
   usageView,
-  verdictLabel,
+  verdictOutcomeLabel,
   verdictTone,
   verificationCountsLabel,
   verificationLabel,
@@ -423,7 +423,7 @@ function AttemptTabs({
               <div className="attempt" key={verdict.id}>
                 <div className="row row--between">
                   <Pill tone={verdictTone(verdict.verdict)}>
-                    {verdictLabel(verdict.verdict, verdict.valid)}
+                    {verdictOutcomeLabel(verdict.verdict, verdict.valid)}
                   </Pill>
                   <span className="faint small">
                     review cycle {verdict.cycle} · reviewer{" "}

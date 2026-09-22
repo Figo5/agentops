@@ -68,10 +68,7 @@ export function ActivityPanel({
   );
 
   const entries: ActivityEntry[] = useMemo(
-    () =>
-      activityEntries(events, context, { attentionOnly })
-        .slice()
-        .reverse(),
+    () => activityEntries(events, context, { attentionOnly }).slice().reverse(),
     [events, context, attentionOnly],
   );
   const raw = useMemo(() => rawLogEntries(events, context), [events, context]);

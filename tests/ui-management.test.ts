@@ -404,13 +404,42 @@ test("a history row carries project, goal, outcome, when, duration, branch and a
     run({ status: "WAITING_APPROVAL", lastReviewVerdict: "REJECT" } as never),
     { projectNames: {}, agentNames: {}, now: Date.now() },
   );
-  assert.equal(rejected.outcomeDetail, "Rejected");
-  assert.equal(rejected.outcome, "Ready for review · Rejected");
+  assert.equal(rejected.outcomeDetail, "Changes requested");
+  assert.equal(rejected.outcome, "Ready for review · Changes requested");
   assert.equal(
     rejected.technical.find(([key]) => key === "Verdict")?.[1],
     "REJECT",
     "the persisted enum stays in the technical rows",
   );
+  // A run waiting at the human acceptance gate already got past its reviewer:
+  // the state word says what is being asked for, and the earlier approval is not
+  // repeated as a second, contradictory label (it stays in the technical rows).
+  const atFinalGate = historyRowView(
+    run({
+      status: "WAITING_APPROVAL",
+      nextStageKey: "final",
+      lastReviewVerdict: "APPROVE",
+    } as never),
+    { projectNames: {}, agentNames: {}, now: Date.now() },
+  );
+  assert.equal(atFinalGate.outcomeWord, "Ready for final approval");
+  assert.equal(atFinalGate.outcomeDetail, null);
+  assert.equal(atFinalGate.outcome, "Ready for final approval");
+  assert.equal(
+    atFinalGate.technical.find(([key]) => key === "Verdict")?.[1],
+    "APPROVE",
+  );
+  // A reviewer asking for changes is still stated, because it is the ask.
+  const fixesAsked = historyRowView(
+    run({
+      status: "WAITING_APPROVAL",
+      nextStageKey: "review",
+      lastReviewVerdict: "APPROVE_WITH_FIXES",
+    } as never),
+    { projectNames: {}, agentNames: {}, now: Date.now() },
+  );
+  assert.equal(fixesAsked.outcomeWord, "Ready for review");
+  assert.equal(fixesAsked.outcomeDetail, "Approved with fixes");
   // An accepted run does not repeat its approval as a second half-sentence.
   const accepted = historyRowView(
     run({ status: "COMPLETED", lastReviewVerdict: "APPROVE" } as never),

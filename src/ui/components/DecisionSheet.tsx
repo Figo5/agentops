@@ -13,14 +13,9 @@
  */
 import type { ReactNode } from "react";
 import type { StageRecord } from "../../core/types.js";
-import {
-  formatTimestamp,
-  relativeTime,
-  statusLabel,
-  text,
-} from "../view-model.js";
+import { formatTimestamp, relativeTime, statusLabel } from "../view-model.js";
 import type { PendingInputQuestion } from "../view-model.js";
-import { Button, Disclosure, Field, KeyValue, Pill, TextArea } from "./Bits.js";
+import { Button, Disclosure, Field, KeyValue, TextArea } from "./Bits.js";
 
 export function InputRequest({
   question,
@@ -48,7 +43,9 @@ export function InputRequest({
           : "nothing was recorded";
   const context = [
     stageName ?? question.stageKey,
-    question.attemptNumber !== null ? `attempt ${question.attemptNumber}` : null,
+    question.attemptNumber !== null
+      ? `attempt ${question.attemptNumber}`
+      : null,
   ]
     .filter((part): part is string => Boolean(part))
     .join(" · ");
@@ -91,7 +88,9 @@ export function InputRequest({
               ["Question source", source],
               [
                 "Stage key",
-                <span className="mono">{question.stageKey ?? "not recorded"}</span>,
+                <span className="mono">
+                  {question.stageKey ?? "not recorded"}
+                </span>,
               ],
               [
                 "Attempt",
@@ -131,6 +130,14 @@ export function StartRunBlock({
   );
 }
 
+/**
+ * What failed, in the operator's terms.
+ *
+ * The recorded reason is the primary line — it is the only thing that explains
+ * why the run stopped and what a retry has to address. The stage, its persisted
+ * kind and status, the timestamp and the attempt count are all real evidence,
+ * so they stay one disclosure down instead of leading the sheet.
+ */
 export function FailureEvidence({
   stage,
   reason,
@@ -141,32 +148,52 @@ export function FailureEvidence({
   attempts: number;
 }) {
   return (
-    <KeyValue
-      rows={[
-        [
-          "What failed",
-          stage ? (
-            <span>
-              {stage.name}{" "}
-              <Pill tone="muted" dot={false}>
-                {stage.kind}
-              </Pill>{" "}
-              · {statusLabel(stage.status)}
-            </span>
-          ) : (
-            "no stage recorded a failure"
-          ),
-        ],
-        ["Recorded reason", text(reason, "no reason recorded")],
-        [
-          "When",
-          stage?.endedAt
-            ? `${formatTimestamp(stage.endedAt)} (${relativeTime(stage.endedAt)})`
-            : "UNKNOWN",
-        ],
-        ["Attempts on this run", String(attempts)],
-      ]}
-    />
+    <div className="stack--tight">
+      <p className="run-sheet__reason wrap-anywhere">
+        {reason
+          ? reason
+          : "No reason was recorded for this failure. Read the failed attempt's output before retrying."}
+      </p>
+      {stage ? (
+        <p className="faint small">
+          {stage.name} did not finish. The failed attempt is kept.
+        </p>
+      ) : null}
+      <Disclosure summary="Technical details">
+        <KeyValue
+          rows={[
+            [
+              "Stage",
+              stage ? (
+                <span>
+                  {stage.name}{" "}
+                  <span className="mono wrap-anywhere">{stage.key}</span>
+                </span>
+              ) : (
+                "no stage recorded a failure"
+              ),
+            ],
+            [
+              "Stage kind",
+              <span className="mono">
+                {stage ? stage.kind : "not recorded"}
+              </span>,
+            ],
+            [
+              "Stage status",
+              stage ? statusLabel(stage.status) : "not recorded",
+            ],
+            [
+              "When",
+              stage?.endedAt
+                ? `${formatTimestamp(stage.endedAt)} (${relativeTime(stage.endedAt)})`
+                : "UNKNOWN",
+            ],
+            ["Attempts on this run", String(attempts)],
+          ]}
+        />
+      </Disclosure>
+    </div>
   );
 }
 

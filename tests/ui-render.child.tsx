@@ -32,7 +32,10 @@ import { ActivityPanel } from "../src/ui/components/ActivityPanel.js";
 import { AgentsView } from "../src/ui/components/AgentsView.js";
 import { ApprovalPanel } from "../src/ui/components/ApprovalPanel.js";
 import { ClampedText, TabPanel, Tabs } from "../src/ui/components/Bits.js";
-import { InputRequest } from "../src/ui/components/DecisionSheet.js";
+import {
+  InputRequest,
+  FailureEvidence,
+} from "../src/ui/components/DecisionSheet.js";
 import { Home } from "../src/ui/components/Home.js";
 import { Nav } from "../src/ui/components/Nav.js";
 import { NewRunFlow } from "../src/ui/components/NewRunFlow.js";
@@ -1383,22 +1386,34 @@ check("review leads with reviewer and findings, prose one level down", () => {
     "findings precede the prose",
   );
   assert.match(markup, /Read full review/);
-  // Provenance and the raw payload are folded under Technical details.
+  // Provenance and the raw payload are folded under Technical details, and the
+  // recorded verdict is stated as an outcome while the persisted enum stays in
+  // that disclosure next to the original review text.
   assert.match(markup, /Technical details/);
   assert.match(markup, /resolved through the verdict/);
   assert.match(markup, /Raw review payload \(JSON\)/);
   assert.match(markup, /reviewed severity: nit/);
-  assert.ok(!/>APPROVE</.test(markup), "no persisted verdict enum as copy");
+  assert.match(markup, /Outcome<\/dt><dd>Approved<\/dd>/);
+  assert.match(
+    markup,
+    /Structured verdict<\/dt><dd><span class="mono">APPROVE<\/span><\/dd>/,
+  );
+  assert.ok(
+    markup.indexOf("APPROVE") > markup.indexOf("Technical details"),
+    "the persisted enum is never the copy the operator reads first",
+  );
   assert.ok(
     !/<details class="disclosure" open/.test(markup),
     "nothing opens by default",
   );
-  // Every earlier verdict is kept as a chronology.
+  // Every earlier verdict is kept as a chronology, in outcome language.
   assert.match(markup, /Earlier reviews \(1\)/);
-  assert.match(markup, /Reject/);
+  assert.match(markup, /Changes requested/);
   assert.match(markup, /empty input throws/);
   assert.match(markup, /Blockers \(1\)/);
   assert.match(markup, /src\/parser\.ts:42/);
+  // No implementation explainer above the chronology.
+  assert.ok(!/Every earlier verdict this run recorded/.test(markup));
 });
 
 check("overview keeps the outcome, the audit and the run's assets", () => {
@@ -1444,6 +1459,13 @@ check("overview keeps the outcome, the audit and the run's assets", () => {
     "the Overview default is not a record table",
   );
   assert.ok(!/14 tests/.test(markup));
+  // The assets card carries its evidence, not an implementation explainer.
+  assert.ok(
+    !/Every file this run references|Run-level: an artifact may belong to no single stage/.test(
+      markup,
+    ),
+    "no implementation explainer under Artifacts and usage",
+  );
   // The live state stays in the header: the Overview adds the run's own summary
   // of the work in flight, never the sentence the header already states.
   assert.match(markup, /reviewing the frozen change/);
@@ -1459,15 +1481,26 @@ check("overview keeps the outcome, the audit and the run's assets", () => {
     !/lifecycle messages|Raw logs live in/.test(markup),
     "no implementation explainer under recent activity",
   );
-  // Run-level artifacts and measured usage are still here: an artifact with no
-  // attempt at all is listed, and the operator can register another.
-  assert.match(markup, /Artifacts and usage/);
-  assert.match(markup, /Artifacts \(1\)/);
+  // Run-level artifacts and measured usage stay reachable, behind one quiet
+  // collapsed disclosure: an artifact with no attempt at all is listed, and the
+  // operator can still register another.
+  assert.match(markup, /Artifacts and usage \(1\)<\/summary>/);
   assert.match(markup, /reports\/run-summary\.md/);
   assert.match(markup, /Register an artifact/);
   assert.match(markup, /Repository-relative path/);
   assert.match(markup, /Register artifact/);
-  assert.match(markup, /Measured usage/);
+  assert.match(markup, /<summary>Measured usage<\/summary>/);
+  // One disclosure, not a card heading with two nested sections, and closed by
+  // default so the Overview default stays short.
+  assert.ok(
+    !/<h2>Artifacts and usage<\/h2>/.test(markup),
+    "no extra card heading above the assets disclosure",
+  );
+  assert.match(
+    markup,
+    /<details class="disclosure card disclosure--card"><summary>Artifacts and usage \(1\)<\/summary>/,
+    "the assets entry point is a single collapsed disclosure",
+  );
   // The stage audit is reachable in one disclosure, closed by default.
   assert.match(markup, /Stage evidence — Implementation/);
   assert.match(markup, /Open evidence for Implementation/);
@@ -1486,6 +1519,8 @@ check("overview never invents evidence it does not have", () => {
     reviewVerdicts: [],
     verification: [],
     snapshots: [],
+    // No artifact was ever registered on this run either.
+    artifacts: [],
     attempts: detail.attempts.map((attempt) => ({
       ...attempt,
       verification: null,
@@ -1521,6 +1556,20 @@ check("overview never invents evidence it does not have", () => {
     !/tests passed|approved|rejected|Verification:/i.test(markup),
     "no pass or verdict is claimed without evidence",
   );
+  // A run with no artifacts at all: one quiet collapsed disclosure, no "(0)"
+  // count, no empty card heading, and registration still reachable inside.
+  assert.match(markup, /<summary>Artifacts and usage<\/summary>/);
+  assert.ok(
+    !/Artifacts and usage \(0\)/.test(markup),
+    "an empty run shows no artifact count",
+  );
+  assert.ok(
+    !/<h2>Artifacts and usage<\/h2>/.test(markup),
+    "an empty run shows no empty assets card",
+  );
+  assert.match(markup, /Register an artifact/);
+  assert.match(markup, /<summary>Measured usage<\/summary>/);
+  assert.match(markup, /This run has no artifacts yet\./);
 });
 
 check(
@@ -2370,6 +2419,50 @@ check("the shell carries the settings route in its navigation", () => {
   } finally {
     globals.window = previous;
   }
+});
+
+check("a failed run leads with the recorded reason, not a record table", () => {
+  const failedStage: StageRecord = stage("implement", "FAILED", {
+    failureReason: "the verification command exited 1",
+    endedAt: "2026-09-22T10:31:00.000Z",
+    attemptCount: 2,
+  });
+  const markup = renderToStaticMarkup(
+    createElement(FailureEvidence, {
+      stage: failedStage,
+      reason: "the verification command exited 1",
+      attempts: 2,
+    }),
+  );
+  // The reason is the first and primary line.
+  assert.match(
+    markup,
+    /class="run-sheet__reason wrap-anywhere">the verification command exited 1</,
+  );
+  assert.ok(
+    !/What failed|Recorded reason/.test(markup),
+    "the record table is gone from the sheet",
+  );
+  // The stage enum, status word, timestamp and attempt count are evidence, so
+  // they live one disclosure down — and are all still present.
+  assert.match(markup, /<summary>Technical details<\/summary>/);
+  assert.match(markup, /Stage kind<\/dt><dd><span class="mono">task<\/span>/);
+  assert.match(markup, /Stage status<\/dt><dd>Failed<\/dd>/);
+  assert.match(markup, /Attempts on this run<\/dt><dd>2<\/dd>/);
+  assert.ok(
+    markup.indexOf("task") > markup.indexOf("Technical details"),
+    "the stage enum never leads the sheet",
+  );
+  // A failure with no recorded reason says so instead of inventing one.
+  const bare = renderToStaticMarkup(
+    createElement(FailureEvidence, {
+      stage: null,
+      reason: null,
+      attempts: 1,
+    }),
+  );
+  assert.match(bare, /No reason was recorded for this failure/);
+  assert.match(bare, /no stage recorded a failure/);
 });
 
 let failures = 0;
