@@ -1,0 +1,1 @@
+{"name":"agentops-demo-fixture","private":true,"type":"module","scripts":{"test":"node --test"}}

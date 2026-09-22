@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.agentops/
+*.sqlite*
+.env*
+!.env.example
+test-results/
+playwright-report/
+.DS_Store

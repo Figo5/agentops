@@ -1,0 +1,570 @@
+/**
+ * Shared presentational primitives.
+ *
+ * These are intentionally dumb: no data fetching, no business rules beyond
+ * presentation. All state decisions live in `../view-model.ts` or the
+ * feature components.
+ */
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import type { ChangeEvent, ReactNode } from "react";
+import type { DiffLine } from "../view-model.js";
+import {
+  classNames,
+  statusLabel,
+  statusTone,
+  type Tone,
+} from "../view-model.js";
+
+export function Pill({
+  tone = "neutral",
+  children,
+  dot = true,
+  title,
+}: {
+  tone?: Tone;
+  children: ReactNode;
+  dot?: boolean;
+  title?: string;
+}) {
+  return (
+    <span
+      className={classNames("pill", `pill--${tone}`, dot && "pill--dot")}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function StatusPill({
+  status,
+  title,
+}: {
+  status: string | null | undefined;
+  title?: string;
+}) {
+  return (
+    <Pill tone={statusTone(status)} title={title}>
+      {statusLabel(status)}
+    </Pill>
+  );
+}
+
+export function Button({
+  children,
+  onClick,
+  variant = "default",
+  size = "md",
+  disabled,
+  title,
+  type = "button",
+  ariaLabel,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  variant?: "default" | "primary" | "success" | "danger" | "ghost";
+  size?: "md" | "sm";
+  disabled?: boolean;
+  title?: string;
+  type?: "button" | "submit";
+  ariaLabel?: string;
+}) {
+  return (
+    <button
+      type={type}
+      className={classNames(
+        "btn",
+        variant !== "default" && `btn--${variant}`,
+        size === "sm" && "btn--sm",
+      )}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function Card({
+  title,
+  actions,
+  children,
+  hint,
+  tight,
+  id,
+}: {
+  title?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  hint?: ReactNode;
+  tight?: boolean;
+  id?: string;
+}) {
+  return (
+    <section className={classNames("card", tight && "card--tight")} id={id}>
+      {(title || actions) && (
+        <div className="card__head">
+          {title ? <h2>{title}</h2> : null}
+          {actions ? <div className="card__actions">{actions}</div> : null}
+        </div>
+      )}
+      {hint ? <p className="card__hint">{hint}</p> : null}
+      {children}
+    </section>
+  );
+}
+
+export function Field({
+  label,
+  children,
+  error,
+  help,
+  htmlFor,
+}: {
+  label: string;
+  children: ReactNode;
+  error?: string;
+  help?: ReactNode;
+  htmlFor?: string;
+}) {
+  return (
+    <div className="field">
+      <label htmlFor={htmlFor}>{label}</label>
+      {children}
+      {help ? <span className="field__help">{help}</span> : null}
+      {error ? (
+        <span className="field__error" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+export function TextInput({
+  value,
+  onChange,
+  id,
+  placeholder,
+  invalid,
+  ariaLabel,
+  type = "text",
+  autoFocus,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  id?: string;
+  placeholder?: string;
+  invalid?: boolean;
+  ariaLabel?: string;
+  type?: string;
+  autoFocus?: boolean;
+}) {
+  return (
+    <input
+      id={id}
+      type={type}
+      value={value}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      aria-invalid={invalid ? "true" : undefined}
+      autoFocus={autoFocus}
+      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+        onChange(event.target.value)
+      }
+    />
+  );
+}
+
+export function TextArea({
+  value,
+  onChange,
+  id,
+  rows,
+  placeholder,
+  ariaLabel,
+  invalid,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  id?: string;
+  rows?: number;
+  placeholder?: string;
+  ariaLabel?: string;
+  invalid?: boolean;
+}) {
+  return (
+    <textarea
+      id={id}
+      rows={rows}
+      value={value}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      aria-invalid={invalid ? "true" : undefined}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+export function Select({
+  value,
+  onChange,
+  id,
+  options,
+  ariaLabel,
+  placeholder,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  id?: string;
+  options: { value: string; label: string }[];
+  ariaLabel?: string;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      id={id}
+      value={value}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {placeholder !== undefined ? (
+        <option value="">{placeholder}</option>
+      ) : null}
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  help,
+  id,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  label: ReactNode;
+  help?: ReactNode;
+  id?: string;
+}) {
+  return (
+    <div className="stack--tight">
+      <label className="checkline" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span>{label}</span>
+      </label>
+      {help ? <span className="field__help">{help}</span> : null}
+    </div>
+  );
+}
+
+export function Notice({
+  tone = "info",
+  icon,
+  children,
+  title,
+}: {
+  tone?: "info" | "warn" | "error" | "success" | "accent";
+  icon?: string;
+  children: ReactNode;
+  title?: string;
+}) {
+  const glyph =
+    icon ??
+    (tone === "error"
+      ? "!"
+      : tone === "success"
+        ? "✓"
+        : tone === "warn"
+          ? "▲"
+          : "i");
+  const role = tone === "error" ? "alert" : "status";
+  return (
+    <div
+      className={classNames("notice", `notice--${tone}`)}
+      role={role}
+      title={title}
+    >
+      <span className="notice__icon" aria-hidden="true">
+        {glyph}
+      </span>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+export function ErrorBox({
+  error,
+  onRetry,
+}: {
+  error: string | null | undefined;
+  onRetry?: () => void;
+}) {
+  if (!error) return null;
+  return (
+    <div className="notice notice--error" role="alert">
+      <span className="notice__icon" aria-hidden="true">
+        !
+      </span>
+      <div className="stack--tight">
+        <span className="wrap-anywhere">{error}</span>
+        {onRetry ? (
+          <span>
+            <Button size="sm" onClick={onRetry}>
+              Retry request
+            </Button>
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function Loading({ label = "Loading…" }: { label?: string }) {
+  return (
+    <p className="loading" role="status">
+      <span className="spinner" aria-hidden="true" />
+      {label}
+    </p>
+  );
+}
+
+export function EmptyState({
+  title,
+  children,
+  steps,
+  action,
+}: {
+  title: string;
+  children?: ReactNode;
+  steps?: { label: string; done: boolean; onClick?: () => void }[];
+  action?: ReactNode;
+}) {
+  return (
+    <div className="empty">
+      <h3>{title}</h3>
+      {children}
+      {steps && steps.length > 0 ? (
+        <div className="empty__steps">
+          {steps.map((step, index) => (
+            <span className="empty__step" key={step.label}>
+              <b aria-hidden="true">{index + 1}</b>
+              {step.onClick ? (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={step.onClick}
+                >
+                  {step.label}
+                </button>
+              ) : (
+                <span style={{ color: step.done ? "var(--mint)" : undefined }}>
+                  {step.label}
+                </span>
+              )}
+              {index < steps.length - 1 ? (
+                <span className="empty__arrow" aria-hidden="true">
+                  →
+                </span>
+              ) : null}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {action ? <div style={{ marginTop: 12 }}>{action}</div> : null}
+    </div>
+  );
+}
+
+export function KeyValue({ rows }: { rows: [ReactNode, ReactNode][] }) {
+  return (
+    <dl className="kv">
+      {rows.map(([key, value], index) => (
+        <div key={index} style={{ display: "contents" }}>
+          <dt>{key}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function CopyButton({
+  text,
+  label = "Copy",
+  title,
+}: {
+  text: string;
+  label?: string;
+  title?: string;
+}) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = setTimeout(() => setState("idle"), 2200);
+    return () => clearTimeout(timer);
+  }, [state]);
+  const copy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+  }, [text]);
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={copy}
+      title={title ?? "Copy the exact text to the clipboard"}
+      disabled={text.length === 0}
+    >
+      {state === "copied"
+        ? "Copied"
+        : state === "failed"
+          ? "Copy failed"
+          : label}
+    </Button>
+  );
+}
+
+export function Tabs({
+  tabs,
+  active,
+  onChange,
+  label,
+}: {
+  tabs: { id: string; label: string; count?: number }[];
+  active: string;
+  onChange: (id: string) => void;
+  label: string;
+}) {
+  const baseId = useId();
+  return (
+    <div className="tabs" role="tablist" aria-label={label}>
+      {tabs.map((tab) => {
+        const selected = tab.id === active;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            id={`${baseId}-${tab.id}`}
+            aria-selected={selected}
+            aria-controls={`${baseId}-${tab.id}-panel`}
+            className="tab"
+            onClick={() => onChange(tab.id)}
+          >
+            {tab.label}
+            {tab.count !== undefined ? (
+              <span className="tab__count">{tab.count}</span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function TabPanel({
+  tabsId,
+  id,
+  children,
+}: {
+  tabsId?: string;
+  id: string;
+  children: ReactNode;
+}) {
+  return (
+    <div role="tabpanel" id={`${tabsId ?? ""}-${id}-panel`}>
+      {children}
+    </div>
+  );
+}
+
+export function DiffView({
+  lines,
+  emptyLabel = "No diff content.",
+}: {
+  lines: DiffLine[];
+  emptyLabel?: string;
+}) {
+  const numbered = useMemo(
+    () => lines.map((line, index) => ({ line, index })),
+    [lines],
+  );
+  if (lines.length === 0) return <p className="faint small">{emptyLabel}</p>;
+  return (
+    <div className="diff">
+      {numbered.map(({ line, index }) => (
+        <div
+          key={`${index}-${line.kind}`}
+          className={classNames("diff__line", `diff__line--${line.kind}`)}
+        >
+          <span className="diff__no" aria-hidden="true">
+            {line.leftLine ?? ""}
+          </span>
+          <span className="diff__no" aria-hidden="true">
+            {line.rightLine ?? ""}
+          </span>
+          <span className="diff__text">
+            {line.kind === "add"
+              ? "+ "
+              : line.kind === "remove"
+                ? "- "
+                : line.kind === "hunk"
+                  ? ""
+                  : "  "}
+            {line.text}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function CodeBlock({
+  text,
+  label,
+  tall,
+  copy = true,
+  emptyLabel = "Nothing recorded.",
+}: {
+  text: string | null | undefined;
+  label?: string;
+  tall?: boolean;
+  copy?: boolean;
+  emptyLabel?: string;
+}) {
+  if (!text) return <p className="faint small">{emptyLabel}</p>;
+  return (
+    <div className="stack--tight">
+      {label || copy ? (
+        <div className="row row--between">
+          <span className="faint small mono">{label}</span>
+          {copy ? (
+            <CopyButton text={text} title={`Copy ${label ?? "text"}`} />
+          ) : null}
+        </div>
+      ) : null}
+      <pre className={classNames("code", tall && "code--tall")}>{text}</pre>
+    </div>
+  );
+}
