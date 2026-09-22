@@ -289,7 +289,12 @@ export function App() {
       <main className="content" id="main-content" tabIndex={-1} ref={mainRef}>
         <header className="topbar">
           <div className="topbar__title">
-            <h1>{titleFor(route)}</h1>
+            {route.view === "run" ? (
+              /* The run view owns the page heading: the goal is the 30px h1. */
+              <span className="topbar__crumb">{titleFor(route)}</span>
+            ) : (
+              <h1>{titleFor(route)}</h1>
+            )}
             <span className="topbar__goal">
               {subtitleFor(route, data.runs.length)}
             </span>
@@ -312,7 +317,9 @@ export function App() {
           </Button>
           <Button
             size="sm"
-            variant="primary"
+            /* On a run page the task at hand is that run: starting a new
+               workflow is quiet navigation, not the primary action. */
+            variant={route.view === "run" ? "ghost" : "primary"}
             onClick={() =>
               (window.location.hash = routeHref({
                 view: "new-run",

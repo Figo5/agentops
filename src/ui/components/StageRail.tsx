@@ -33,27 +33,6 @@ function toneOf(status: string): Tone {
   }
 }
 
-function glyphOf(status: string): string {
-  switch (status) {
-    case "COMPLETED":
-      return "✓";
-    case "RUNNING":
-      return "▶";
-    case "FAILED":
-    case "CANCELLED":
-      return "✕";
-    case "WAITING_APPROVAL":
-    case "WAITING_INPUT":
-      return "!";
-    case "INTERRUPTED":
-      return "~";
-    case "SKIPPED":
-      return "–";
-    default:
-      return "";
-  }
-}
-
 function RailNodeButton({
   node,
   selected,
@@ -66,12 +45,13 @@ function RailNodeButton({
   const tone = toneOf(node.status);
   return (
     <div className="rail__node">
+      {/* The marker is the status icon: a tone-filled dot. The status word is
+          rendered next to it and the button's accessible name carries it too. */}
       <span
         className={classNames("rail__marker", `rail__marker--${tone}`)}
+        title={statusLabel(node.status)}
         aria-hidden="true"
-      >
-        {glyphOf(node.status)}
-      </span>
+      />
       <button
         type="button"
         className="rail__button"

@@ -190,26 +190,60 @@ export type Tone =
   | "muted";
 
 const STATUS_LABELS: Record<string, string> = {
-  DRAFT: "DRAFT",
-  RUNNING: "RUNNING",
-  WAITING_APPROVAL: "WAITING FOR YOU",
-  WAITING_INPUT: "WAITING FOR INPUT",
-  FAILED: "FAILED",
-  INTERRUPTED: "INTERRUPTED",
-  COMPLETED: "COMPLETED",
-  CANCELLED: "CANCELLED",
-  PENDING: "PENDING",
-  SKIPPED: "SKIPPED",
-  planned: "PLANNED",
-  passed: "PASSED",
-  failed: "FAILED",
-  unavailable: "UNAVAILABLE",
-  unknown: "UNKNOWN",
+  DRAFT: "Draft",
+  RUNNING: "Running",
+  WAITING_APPROVAL: "Waiting for you",
+  WAITING_INPUT: "Waiting for input",
+  FAILED: "Failed",
+  INTERRUPTED: "Interrupted",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
+  PENDING: "Pending",
+  SKIPPED: "Skipped",
+  planned: "Planned",
+  passed: "Passed",
+  failed: "Failed",
+  unavailable: "Unavailable",
+  unknown: "Unknown",
 };
 
 export function statusLabel(status: string | null | undefined): string {
   if (!status) return UNKNOWN;
   return STATUS_LABELS[status] ?? status;
+}
+
+/**
+ * Status as an icon plus a word (design system): the glyph carries the tone,
+ * the word carries the meaning, and the raw persisted enum stays available as
+ * a `title` on the rendered element. No uppercase monospace state labels.
+ */
+export function statusIcon(status: string | null | undefined): string {
+  switch (status) {
+    case "COMPLETED":
+    case "completed":
+    case "passed":
+      return "✓";
+    case "RUNNING":
+    case "running":
+      return "●";
+    case "WAITING_APPROVAL":
+    case "WAITING_INPUT":
+    case "waiting_input":
+    case "unknown":
+      return "!";
+    case "FAILED":
+    case "failed":
+    case "INTERRUPTED":
+    case "CANCELLED":
+    case "unavailable":
+      return "!";
+    case "PENDING":
+    case "planned":
+    case "SKIPPED":
+      return "○";
+    default:
+      return "○";
+  }
 }
 
 export function statusTone(status: string | null | undefined): Tone {
@@ -1200,8 +1234,84 @@ export function verdictLabel(
   valid = true,
 ): string {
   if (!verdict)
-    return valid ? "NO STRUCTURED VERDICT" : "INVALID VERDICT PAYLOAD";
-  return verdict.replace(/_/g, " ");
+    return valid ? "No structured verdict" : "Invalid verdict payload";
+  const words = verdict.toLowerCase().replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * Issues are grouped into the two dispositions an operator decides on:
+ * `blocking` stops the run, everything else (major, minor, nit) is a
+ * suggestion. The persisted severity word is preserved verbatim on the issue
+ * itself, so the grouping never hides what the reviewer actually wrote.
+ */
+export type IssueDisposition = "blocker" | "suggestion";
+
+export function issueDisposition(severity: string): IssueDisposition {
+  return severity.trim().toLowerCase() === "blocking"
+    ? "blocker"
+    : "suggestion";
+}
+
+export function issueDispositionLabel(disposition: IssueDisposition): string {
+  return disposition === "blocker" ? "Blocker" : "Suggestion";
+}
+
+export interface IssueTally {
+  blockers: number;
+  suggestions: number;
+  /** `true` when the payload listed no issues at all. */
+  empty: boolean;
+  /** One short phrase: `2 suggestions`, `1 blocker · 2 suggestions`, … */
+  label: string;
+}
+
+export function issueTally(
+  issues: readonly { severity: string }[],
+): IssueTally {
+  let blockers = 0;
+  let suggestions = 0;
+  for (const issue of issues) {
+    if (issueDisposition(issue.severity) === "blocker") blockers += 1;
+    else suggestions += 1;
+  }
+  const parts: string[] = [];
+  if (blockers > 0)
+    parts.push(`${blockers} blocker${blockers === 1 ? "" : "s"}`);
+  if (suggestions > 0)
+    parts.push(`${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
+  return {
+    blockers,
+    suggestions,
+    empty: blockers + suggestions === 0,
+    label: parts.length > 0 ? parts.join(" · ") : "No issues recorded",
+  };
+}
+
+/**
+ * One short sentence for a verification outcome, for the concise evidence
+ * summary: `7 tests passed`. Counts come from a single verification attempt —
+ * the newest row correlated by attempt id — and are never summed across runs
+ * (two 7-test records are 7 tests, not 14).
+ */
+export function verificationShortLabel(outcome: {
+  status: string;
+  counts: {
+    passed: number;
+    failed: number;
+    skipped: number;
+    total: number;
+  } | null;
+}): string {
+  const { counts } = outcome;
+  if (!counts || counts.total === null)
+    return outcome.status === "passed"
+      ? "Command passed, test count unavailable"
+      : `Verification ${outcome.status}, test count unavailable`;
+  const total = formatCount(counts.total);
+  const passed = formatCount(counts.passed);
+  if (counts.failed > 0) return `${passed} of ${total} tests passed`;
+  return `${passed} test${counts.passed === 1 ? "" : "s"} passed`;
 }
 
 /**
@@ -1334,6 +1444,26 @@ export function approvalGateLabel(gate: string): string {
   return APPROVAL_GATE_LABELS[gate] ?? gate;
 }
 
+/**
+ * The one primary state sentence for a pending gate.
+ *
+ * This is the page's semantic state ("Ready for your review"), not a repeat of
+ * the run status word and not a raw gate key: `final_acceptance` and
+ * `final_verify` never reach the screen as identifiers.
+ */
+export function approvalStateHeadline(gate: string): string {
+  switch (gate) {
+    case "final_acceptance":
+      return "Ready for your review";
+    case "review_reject":
+      return "Review rejected — your call";
+    case "review_cycle_exhausted":
+      return "Review cycles exhausted — your call";
+    default:
+      return "Waiting for your decision";
+  }
+}
+
 export interface DecisionOption {
   decision: ApprovalDecision;
   label: string;
@@ -1429,6 +1559,8 @@ export interface ApprovalEvidenceIssue {
 
 export interface ApprovalEvidenceVerdict {
   label: string;
+  /** The persisted verdict kind, so copy can be derived without re-parsing. */
+  kind: ReviewVerdictKind | null;
   tone: Tone;
   valid: boolean;
   cycle: number;
@@ -1437,8 +1569,12 @@ export interface ApprovalEvidenceVerdict {
   reviewer: string;
   /** How the reviewer name was resolved (verdict field vs recorded attempt). */
   reviewerSource: ReviewerIdentity["source"];
+  /** Where the reviewer identity came from, in words, for the details view. */
+  reviewerProvenance: string;
   summary: string | null;
   issues: ApprovalEvidenceIssue[];
+  /** Blocking findings vs suggestions, with the persisted severity kept. */
+  tally: IssueTally;
   createdAt: string;
 }
 
@@ -1457,6 +1593,8 @@ export interface ApprovalEvidence {
 export interface ApprovalEvidenceVerification {
   status: string;
   label: string;
+  /** Short form for the concise summary: `7 tests passed`. */
+  shortLabel: string;
   attemptNumber: number;
   stageKey: string;
   /** `true` when the verification belongs to the stage that opened the gate. */
@@ -1512,10 +1650,24 @@ export function approvalEvidenceView(input: {
     input.verdicts
       .filter((verdict) => verdict.stageKey === approval.stageKey)
       .at(-1) ?? input.verdicts.at(-1);
-  const verified = [...input.attempts]
-    .filter((candidate) => candidate.verification)
-    .reverse();
+  const tests = input.tests ?? [];
+  /** Newest test record timestamp for one attempt (`""` when it has none). */
+  const testRecency = (attemptId: string): string =>
+    tests
+      .filter((test) => test.attemptId === attemptId)
+      .reduce(
+        (newest, test) => (test.createdAt > newest ? test.createdAt : newest),
+        "",
+      );
+  const verified = input.attempts.filter((candidate) => candidate.verification);
+  const byRecency = [...verified].sort((a, b) =>
+    testRecency(a.id).localeCompare(testRecency(b.id)),
+  );
   const attempt =
+    // 1. the gate's own stage, or 2. the attempt the verdict came from,
+    // otherwise 3. the newest verification recorded anywhere in the run —
+    // never a blend, and never a sum of two verification records.
+    verified.find((candidate) => candidate.stageKey === approval.stageKey) ??
     (verdictRecord
       ? verified.find(
           (candidate) =>
@@ -1523,8 +1675,7 @@ export function approvalEvidenceView(input: {
             candidate.stageKey === verdictRecord.stageKey,
         )
       : undefined) ??
-    verified.find((candidate) => candidate.stageKey === approval.stageKey) ??
-    verified[0];
+    byRecency.at(-1);
   const counts = attempt
     ? attemptCountsView({
         attemptId: attempt.id,
@@ -1550,12 +1701,14 @@ export function approvalEvidenceView(input: {
       verdictRecord && identity
         ? {
             label: verdictLabel(verdictRecord.verdict, verdictRecord.valid),
+            kind: verdictRecord.verdict,
             tone: verdictTone(verdictRecord.verdict),
             valid: verdictRecord.valid,
             cycle: verdictRecord.cycle,
             stageKey: verdictRecord.stageKey,
             reviewer: identity.name,
             reviewerSource: identity.source,
+            reviewerProvenance: reviewerProvenanceLabel(identity),
             summary: verdictRecord.summary,
             issues: verdictRecord.issues.map((issue) => ({
               severity: issue.severity,
@@ -1564,6 +1717,7 @@ export function approvalEvidenceView(input: {
                 ? `${issue.path}${issue.line ? `:${issue.line}` : ""}`
                 : null,
             })),
+            tally: issueTally(verdictRecord.issues),
             createdAt: verdictRecord.createdAt,
           }
         : null,
@@ -1575,6 +1729,10 @@ export function approvalEvidenceView(input: {
               ...attempt.verification,
               counts: counts.counts,
             }),
+            shortLabel: verificationShortLabel({
+              status: attempt.verification.status,
+              counts: counts.counts,
+            }),
             attemptNumber: attempt.attemptNumber,
             stageKey: attempt.stageKey,
             onGateStage: attempt.stageKey === approval.stageKey,
@@ -1583,6 +1741,65 @@ export function approvalEvidenceView(input: {
           }
         : null,
   };
+}
+
+/** How the reviewer identity was established, in words. */
+export function reviewerProvenanceLabel(identity: ReviewerIdentity): string {
+  switch (identity.source) {
+    case "verdict field":
+      return "read from the verdict's reviewer field";
+    case "reviewer attempt agent":
+      return identity.agentId
+        ? `resolved through the verdict's attempt (${identity.agentId}) to the agent record`
+        : "resolved through the verdict's attempt";
+    default:
+      return "no reviewer field and no attempt on the verdict";
+  }
+}
+
+/** `approved` · `rejected` · `approved with fixes required` · explicit absence. */
+export function verdictActionWord(
+  verdict: ReviewVerdictKind | null,
+  valid: boolean,
+): string {
+  if (!valid) return "returned an invalid payload";
+  switch (verdict) {
+    case "APPROVE":
+      return "approved";
+    case "APPROVE_WITH_FIXES":
+      return "approved with fixes required";
+    case "REJECT":
+      return "rejected";
+    default:
+      return "returned no structured verdict";
+  }
+}
+
+/**
+ * The one-line summary of the persisted evidence, shown before the buttons:
+ * `Claude approved · 7 tests passed`. Both halves come from the payload — the
+ * reviewer through the durable verdict→attempt→agent relationship, and the
+ * count from a single verification attempt (never a sum of test records).
+ */
+export function approvalSummaryLine(evidence: ApprovalEvidence): string {
+  const parts: string[] = [];
+  const verdict = evidence.verdict;
+  if (verdict) {
+    if (verdict.reviewerSource === "none")
+      parts.push(`Verdict recorded (reviewer not recorded)`);
+    else
+      parts.push(
+        `${verdict.reviewer} ${verdictActionWord(verdict.kind, verdict.valid)}`,
+      );
+  } else {
+    parts.push("No review verdict recorded for this gate");
+  }
+  parts.push(
+    evidence.verification
+      ? evidence.verification.shortLabel
+      : "No verification recorded",
+  );
+  return parts.join(" · ");
 }
 
 export interface PendingInputQuestion {
@@ -1700,6 +1917,55 @@ export function homeSections(
     else recent.push(run);
   }
   return { active, waiting, failed, recent: recent.slice(0, recentLimit) };
+}
+
+/**
+ * A time-appropriate greeting for the operational home.
+ *
+ * Deterministic from the clock the caller passes (tests pass a fixed time);
+ * nothing is invented beyond the hour of day.
+ */
+export function greetingFor(now: Date = new Date()): string {
+  const hour = now.getHours();
+  if (hour < 5) return "Still up";
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+export interface HomeSummary {
+  /** Runs that stopped and are waiting on an operator: gates plus failures. */
+  needsYou: RunRecord[];
+  running: RunRecord[];
+  recent: RunRecord[];
+  /** The number the greeting states: needs-you plus running. */
+  attention: number;
+  /** One honest sentence for the greeting line. */
+  attentionLabel: string;
+}
+
+/**
+ * The operational home summary.
+ *
+ * Only the three sections an operator acts on: what needs them, what is
+ * running, and what finished recently. Empty categories are absent from the
+ * model entirely (the view renders nothing for them) instead of appearing as
+ * placeholder cards.
+ */
+export function homeSummary(
+  runs: readonly RunRecord[],
+  recentLimit = 6,
+): HomeSummary {
+  const { active, waiting, failed, recent } = homeSections(runs, recentLimit);
+  const needsYou = [...waiting, ...failed].sort(byUpdatedDesc);
+  const attention = needsYou.length + active.length;
+  let attentionLabel = "Nothing needs you right now";
+  if (needsYou.length > 0 && active.length > 0)
+    attentionLabel = `${needsYou.length} need you · ${active.length} running`;
+  else if (needsYou.length > 0)
+    attentionLabel = `${needsYou.length} need${needsYou.length === 1 ? "s" : ""} you`;
+  else if (active.length > 0) attentionLabel = `${active.length} running`;
+  return { needsYou, running: active, recent, attention, attentionLabel };
 }
 
 /* ------------------------------------------------------------------ */
@@ -2246,11 +2512,12 @@ export function agentStateLabel(agent: AgentRecord): string {
 export function agentStateTone(agent: AgentRecord): Tone {
   const available = (agent as AgentRecord & { availability?: string })
     .availability;
+  // Only a recorded problem is a problem. An installed CLI, an enabled record or
+  // a deterministic mock are facts, not successful access validation — the UI
+  // never paints them green, because nothing here verifies access.
   if (available === "UNAVAILABLE" || available === "UNCONFIGURED")
     return "danger";
-  if (available === "MOCK") return "info";
-  if (isManualAgent(agent)) return "warn";
-  return agent.enabled ? "success" : "muted";
+  return "muted";
 }
 
 /* ------------------------------------------------------------------ */

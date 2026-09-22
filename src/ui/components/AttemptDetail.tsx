@@ -21,6 +21,8 @@ import {
   formatClock,
   formatDuration,
   formatTimestamp,
+  issueDisposition,
+  issueDispositionLabel,
   promptComparisons,
   relativeTime,
   reviewerIdentity,
@@ -39,6 +41,7 @@ import {
   CodeBlock,
   CopyButton,
   DiffView,
+  Disclosure,
   KeyValue,
   Notice,
   Pill,
@@ -175,36 +178,26 @@ function AttemptTabs({
               </p>
               {comparison.previousPrompt !== null &&
               comparison.currentPrompt !== null ? (
-                <details>
-                  <summary style={{ cursor: "pointer" }} className="small">
-                    Show the line diff
-                  </summary>
-                  <div style={{ marginTop: 8 }}>
-                    <DiffView
-                      lines={diffLines(
-                        comparison.previousPrompt,
-                        comparison.currentPrompt,
-                      )}
-                    />
-                  </div>
-                </details>
+                <Disclosure summary="Show the line diff">
+                  <DiffView
+                    lines={diffLines(
+                      comparison.previousPrompt,
+                      comparison.currentPrompt,
+                    )}
+                  />
+                </Disclosure>
               ) : (
                 <p className="faint small">
                   One side of the comparison was not persisted, so no diff can
                   be shown.
                 </p>
               )}
-              <details>
-                <summary style={{ cursor: "pointer" }} className="small">
-                  Show the previous prompt verbatim
-                </summary>
-                <div style={{ marginTop: 8 }}>
-                  <CodeBlock
-                    text={comparison.previousPrompt}
-                    emptyLabel="Previous prompt not persisted."
-                  />
-                </div>
-              </details>
+              <Disclosure summary="Show the previous prompt verbatim">
+                <CodeBlock
+                  text={comparison.previousPrompt}
+                  emptyLabel="Previous prompt not persisted."
+                />
+              </Disclosure>
             </div>
           ) : (
             <p className="faint small">
@@ -213,16 +206,9 @@ function AttemptTabs({
             </p>
           )}
           {attempt.promptPacket ? (
-            <details>
-              <summary style={{ cursor: "pointer" }} className="small">
-                Show the structured prompt packet (JSON)
-              </summary>
-              <div style={{ marginTop: 8 }}>
-                <CodeBlock
-                  text={JSON.stringify(attempt.promptPacket, null, 2)}
-                />
-              </div>
-            </details>
+            <Disclosure summary="Show the structured prompt packet (JSON)">
+              <CodeBlock text={JSON.stringify(attempt.promptPacket, null, 2)} />
+            </Disclosure>
           ) : (
             <p className="faint small">
               No structured packet was persisted for this attempt.
@@ -467,35 +453,35 @@ function AttemptTabs({
                 )}
                 {verdict.issues.length > 0 ? (
                   <ul
-                    className="stack--tight"
-                    style={{ margin: 0, paddingLeft: 18 }}
+                    className="evidence-issues"
+                    style={{ margin: 0, paddingLeft: 0 }}
                   >
-                    {verdict.issues.map((issue, index) => (
-                      <li key={index}>
-                        <Pill
-                          tone={
-                            issue.severity === "blocking"
-                              ? "danger"
-                              : issue.severity === "major"
-                                ? "warn"
-                                : "muted"
-                          }
-                          dot={false}
-                        >
-                          {issue.severity}
-                        </Pill>{" "}
-                        <span className="wrap-anywhere">
-                          {issue.description}
-                        </span>
-                        {issue.path ? (
-                          <span className="faint small mono">
-                            {" "}
-                            {issue.path}
-                            {issue.line ? `:${issue.line}` : ""}
+                    {verdict.issues.map((issue, index) => {
+                      const disposition = issueDisposition(issue.severity);
+                      return (
+                        <li key={index} className="evidence-issue">
+                          <div className="evidence-issue__head">
+                            <Pill
+                              tone={
+                                disposition === "blocker" ? "danger" : "muted"
+                              }
+                              dot={false}
+                            >
+                              {issueDispositionLabel(disposition)}
+                            </Pill>
+                            <span className="faint small">
+                              reviewed severity: {issue.severity}
+                              {issue.path
+                                ? ` · ${issue.path}${issue.line ? `:${issue.line}` : ""}`
+                                : ""}
+                            </span>
+                          </div>
+                          <span className="evidence-issue__body">
+                            {issue.description}
                           </span>
-                        ) : null}
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : (
                   <p className="faint small">No issues listed.</p>
@@ -505,14 +491,9 @@ function AttemptTabs({
                 ) : (
                   <p className="faint small">Confidence {verdict.confidence}</p>
                 )}
-                <details>
-                  <summary style={{ cursor: "pointer" }} className="small">
-                    Show the raw review payload
-                  </summary>
-                  <div style={{ marginTop: 8 }}>
-                    <CodeBlock text={verdict.raw} />
-                  </div>
-                </details>
+                <Disclosure summary="Show the raw review payload">
+                  <CodeBlock text={verdict.raw} />
+                </Disclosure>
               </div>
             ))
           )}

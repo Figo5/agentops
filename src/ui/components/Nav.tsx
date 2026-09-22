@@ -101,7 +101,7 @@ export function Nav({
         <p className="nav__label">
           Open runs{" "}
           {waiting.length > 0 ? (
-            <span style={{ color: "var(--amber)" }}>
+            <span style={{ color: "var(--warn)" }}>
               · {waiting.length} need you
             </span>
           ) : null}
@@ -162,10 +162,10 @@ export function Nav({
             style={{
               background:
                 connection === "live"
-                  ? "var(--mint)"
+                  ? "var(--ok)"
                   : connection === "reconnecting"
-                    ? "var(--amber)"
-                    : "var(--text-faint)",
+                    ? "var(--warn)"
+                    : "var(--text-2)",
             }}
             aria-hidden="true"
           />

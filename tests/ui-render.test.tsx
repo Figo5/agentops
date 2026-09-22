@@ -33,11 +33,15 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
 
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.status, 0, `render harness failed:\n${output}`);
-  assert.match(output, /10\/10 render checks passed/);
-  assert.match(output, /ok - first-run empty state/);
+  assert.match(output, /11\/11 render checks passed/);
+  assert.match(output, /ok - first-run empty state offers one useful action/);
   assert.match(
     output,
-    /ok - the stage rail renders the review branch as a branch/,
+    /ok - dashboard groups runs into needs you, running and recent sections/,
+  );
+  assert.match(
+    output,
+    /ok - empty categories are not rendered as placeholder sections/,
   );
   assert.match(
     output,

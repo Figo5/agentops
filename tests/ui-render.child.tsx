@@ -183,21 +183,24 @@ function check(label: string, body: () => void): void {
   checks.push({ label, run: body });
 }
 
-check("first-run empty state guides project -> agents -> workflow", () => {
+check("first-run empty state offers one useful action", () => {
   const markup = renderToStaticMarkup(
     Home({ bootstrap: emptyBootstrap }) as never,
   );
-  assert.match(markup, /No projects registered yet/);
-  assert.match(markup, /Add a project/);
-  assert.match(markup, /Configure agents/);
-  assert.match(markup, /Start a workflow/);
-  assert.match(markup, /Nothing is blocked on a human decision/);
-  assert.match(markup, /No agents configured/);
-  assert.match(markup, /No run is executing right now/);
+  assert.match(markup, /Add your first project/);
+  assert.match(markup, />Add project</);
+  // One action, and no inventory of empty categories.
+  assert.ok(
+    !/Configure agents|Start a workflow|No agents configured|Templates/.test(
+      markup,
+    ),
+    "the first-run page is one concise action, not an inventory",
+  );
+  assert.match(markup, /Nothing needs you right now/);
 });
 
 check(
-  "dashboard groups runs into waiting, active, attention and recent sections",
+  "dashboard groups runs into needs you, running and recent sections",
   () => {
     const bootstrap = bootstrapFixture([
       run(
@@ -215,22 +218,74 @@ check(
       run("FAILED", "run-failed", "Broken fixture", "2026-09-22T10:30:00.000Z"),
       run("COMPLETED", "run-done", "Earlier work", "2026-09-22T09:30:00.000Z"),
     ]);
-    const markup = renderToStaticMarkup(Home({ bootstrap }) as never);
-    assert.match(markup, /Waiting for you/);
+    const markup = renderToStaticMarkup(
+      Home({
+        bootstrap,
+        now: new Date("2026-09-22T14:00:00.000Z"),
+      }) as never,
+    );
+    // Time-appropriate greeting (14:00 local) and an honest attention count.
+    assert.match(markup, /class="page-title"/);
+    assert.match(markup, /Good (morning|afternoon|evening)|Still up/);
+    assert.match(markup, /2 need you · 1 running/);
+    assert.match(markup, /1 project/);
+    // Three calm sections, each with its rows.
+    assert.match(markup, /Needs you/);
+    assert.match(markup, /Running/);
+    assert.match(markup, /Recent/);
     assert.match(markup, /Ship the review loop/);
     assert.match(markup, /Refactor the rail/);
     assert.match(markup, /Broken fixture/);
     assert.match(markup, /Earlier work/);
-    assert.match(markup, /WAITING FOR YOU/);
+    // Primary project name plus one semantic status and a clear action link.
     assert.match(markup, /Fixture project/);
-    assert.match(markup, /Implement and review/);
-    // Counts are derived from the payload, never hard-coded.
-    assert.match(markup, /<b>1<\/b> projects/);
-    assert.match(markup, /<b>1<\/b> agents/);
-    assert.match(markup, /<b>1<\/b> templates \/ <b>8<\/b> plan stages/);
-    assert.match(markup, /Choose models and execution tools in Agents/);
+    assert.match(markup, /title="Waiting for you \(WAITING_APPROVAL\)"/);
+    assert.match(
+      markup,
+      /class="run-row__link" href="#\/run\/run-waiting">Review/,
+    );
+    assert.match(
+      markup,
+      /class="run-row__link" href="#\/run\/run-failed">Retry/,
+    );
+    assert.match(markup, /class="run-row__link" href="#\/run\/run-done">View/);
+    // No inventory and no template/stage identifiers in the rows.
+    assert.ok(
+      !/Workspace|Templates on this server|plan stages|agents \(/.test(markup),
+      "the operational home is not an inventory",
+    );
+    assert.ok(
+      !/implement-review|v1 ·|8 stages|plan stages/.test(markup),
+      "no template or stage identifiers on the home rows",
+    );
+    // The wait is stated once per row (the status word), never repeated as a
+    // second badge, banner or meta chip; the title keeps the raw enum.
+    assert.equal(
+      (markup.match(/>Waiting for you</g) ?? []).length,
+      1,
+      "the waiting status appears exactly once per waiting row",
+    );
+    assert.ok(
+      !/WAITING FOR YOU/.test(markup),
+      "no shouted uppercase status anywhere on the home",
+    );
+    // Projects count sits at the bottom as a link.
+    assert.match(markup, /class="home-foot"/);
+    assert.match(markup, /href="#\/projects">1 project/);
+    assert.match(markup, /href="#\/runs">Run history/);
   },
 );
+
+check("empty categories are not rendered as placeholder sections", () => {
+  const bootstrap = bootstrapFixture([
+    run("COMPLETED", "run-done", "Earlier work", "2026-09-22T09:30:00.000Z"),
+  ]);
+  const markup = renderToStaticMarkup(Home({ bootstrap }) as never);
+  assert.match(markup, /Recent/);
+  assert.ok(!/Needs you/.test(markup), "no empty Needs you section");
+  assert.ok(!/class="home-section__head"><h2>Running/.test(markup));
+  assert.match(markup, /Nothing needs you right now/);
+});
 
 check(
   "a run row renders the persisted record and omits absent derived fields",
@@ -246,8 +301,9 @@ check(
     );
     assert.match(bare, /Broken fixture/);
     assert.match(bare, /#\/run\/run-failed/);
-    assert.match(bare, /FAILED/);
+    assert.match(bare, /Failed/);
     assert.match(bare, /Fixture project/);
+    assert.match(bare, /class="run-row__link" href="#\/run\/run-failed">Retry/);
     assert.ok(
       !/feature\//.test(bare),
       "no branch chip when the server sends no branch",
@@ -263,8 +319,10 @@ check(
         projectName: "Fixture project",
       }) as never,
     );
-    assert.match(withDerived, /feature\/review-loop/);
-    assert.match(withDerived, /REJECT/);
+    // Derived fields the row no longer prints must not reappear: the row states
+    // the run's own status once, with no branch or verdict chips.
+    assert.ok(!/feature\/review-loop/.test(withDerived));
+    assert.ok(!/Reject/.test(withDerived) || !/REJECT/.test(withDerived));
   },
 );
 
@@ -294,7 +352,7 @@ check("the stage rail renders the review branch as a branch", () => {
   assert.match(markup, /Structured review: fixes/);
   assert.match(markup, /Structured review: re-verification/);
   assert.match(markup, /fixes from review cycle 1 of 2 · active/);
-  assert.match(markup, /WAITING FOR YOU/);
+  assert.match(markup, /Waiting for you/);
   assert.match(markup, /2\/6 non-conditional stages completed/);
   assert.match(
     markup,
@@ -551,9 +609,34 @@ check(
     // Real payload shape: the verdict omits `reviewer`, the counts are null in
     // the verification record but confident in the normalized test run.
     assert.match(idle, /Claude Opus 4\.8/);
-    assert.match(idle, /from the reviewer attempt/);
+    assert.match(idle, /resolved through the verdict/);
     assert.match(idle, /Command passed · 7\/7 passed/);
     assert.match(idle, /counts from the normalized test run node:test/);
+    // The default view of the evidence is short: reviewer + verdict and the
+    // latest verification, in front of the controls, with the full payload one
+    // level down in disclosures (nothing is hidden or deleted).
+    const summaryAt = idle.indexOf("Claude Opus 4.8 rejected");
+    assert.ok(summaryAt >= 0, "the concise evidence summary is rendered");
+    assert.ok(
+      summaryAt < firstButtonAt,
+      `the evidence summary (${summaryAt}) must precede the decision buttons (${firstButtonAt})`,
+    );
+    assert.match(idle, /1 blocker/);
+    assert.match(idle, /Verification: 7 tests passed/);
+    // The page's primary state is the semantic sentence, not the run status
+    // word and not the raw gate key.
+    assert.match(idle, /Review rejected — your call/);
+    assert.ok(
+      !/final_acceptance|final_verify/.test(idle),
+      "no raw gate or stage keys in the evidence block",
+    );
+    assert.match(idle, /Read full review/);
+    assert.match(idle, /Technical details/);
+    assert.equal(
+      (idle.match(/<details class="disclosure">/g) ?? []).length,
+      3,
+      "review prose, provenance and decision help are all disclosures",
+    );
     assert.match(idle, /Override rejection and continue/);
     assert.ok(
       !/Reject with override/.test(idle),

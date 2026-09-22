@@ -19,7 +19,6 @@ import { useAction, useRunDetail } from "../hooks.js";
 import {
   approvalDecisionOptions,
   approvalEvidenceView,
-  approvalGateLabel,
   buildStageRail,
   eventsForRun,
   formatTimestamp,
@@ -40,10 +39,13 @@ import {
   Button,
   Card,
   ClampedText,
+  Disclosure,
   ErrorBox,
   Field,
   Loading,
   Notice,
+  StateLine,
+  StatusMark,
   StatusPill,
   TextArea,
 } from "./Bits.js";
@@ -106,7 +108,6 @@ export function RunView({
   const [cancelReason, setCancelReason] = useState("");
   const [operatorInput, setOperatorInput] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
-  const [showCancel, setShowCancel] = useState(false);
   const [showRetry, setShowRetry] = useState(false);
 
   const reload = useCallback(() => {
@@ -137,7 +138,6 @@ export function RunView({
     setCancelReason("");
     setOperatorInput("");
     setFormError(null);
-    setShowCancel(false);
     setShowRetry(false);
   }, [runId]);
 
@@ -258,7 +258,6 @@ export function RunView({
     );
     if (updated) {
       setCancelReason("");
-      setShowCancel(false);
     }
   };
 
@@ -274,8 +273,6 @@ export function RunView({
     if (updated) setOperatorInput("");
   };
 
-  const needsHuman =
-    run.status === "WAITING_APPROVAL" || run.status === "WAITING_INPUT";
   const canRetry = run.status === "FAILED" || run.status === "INTERRUPTED";
   const canStart = run.status === "DRAFT";
   const canCancel = !isTerminalRun(run.status);
@@ -283,62 +280,14 @@ export function RunView({
   return (
     <>
       <div className="view view--wide">
-        {run.status === "WAITING_APPROVAL" ? (
-          <div className="banner" role="status">
-            <b>WAITING FOR YOU</b>
-            <span>
-              {approvalGateLabel(pending?.gate ?? "")} — the run is stopped
-              until an operator decides. Nothing advances on its own.
-            </span>
-            {pending?.reason ? (
-              <span className="faint small">reason: {pending.reason}</span>
-            ) : null}
-          </div>
-        ) : null}
-        {run.status === "WAITING_INPUT" ? (
-          <div className="banner" role="status">
-            <b>WAITING FOR YOU</b>
-            <span>
-              An agent is blocked on operator input. Supply the text below to
-              continue the attempt.
-            </span>
-          </div>
-        ) : null}
-        {run.status === "FAILED" || run.status === "INTERRUPTED" ? (
-          <div className="notice notice--error" role="alert">
-            <span className="notice__icon" aria-hidden="true">
-              !
-            </span>
-            <div>
-              <b>{statusLabel(run.status)}</b> —{" "}
-              {text(
-                run.failureReason ?? run.interruptReason,
-                "no reason recorded",
-              )}
-              . Resuming requires a deliberate retry with a reason; the failed
-              attempt stays in the history.
-            </div>
-          </div>
-        ) : null}
-        {run.status === "DRAFT" ? (
-          <div className="banner" role="status">
-            <b>DRAFT</b>
-            <span>
-              This run is persisted but idle. Review the plan below, then start
-              it explicitly.
-            </span>
-          </div>
-        ) : null}
-
-        <Card
-          title={
-            <>
-              <ClampedText text={run.goal} className="goal-title" />
-              <StatusPill status={run.status} />
-            </>
-          }
-          actions={
-            <>
+        {/* Page header: the goal is the 30px page title, state sits beside it. */}
+        <header className="page-head">
+          <div className="page-head__title">
+            <h1 className="page-title">
+              <ClampedText text={run.goal} />
+            </h1>
+            <StatusMark status={run.status} size="lg" />
+            <div className="page-head__actions">
               <Button
                 size="sm"
                 variant="ghost"
@@ -349,63 +298,53 @@ export function RunView({
               </Button>
               <Button
                 size="sm"
-                variant={logsOpen ? "primary" : "default"}
+                variant="ghost"
                 onClick={() => setLogsOpen((current) => !current)}
               >
                 {logsOpen ? "Hide logs" : "Show logs"}
               </Button>
-            </>
-          }
-          hint={`${project?.name ?? run.projectId} · ${run.projectRoot} · created ${formatTimestamp(run.createdAt)} · updated ${relativeTime(run.updatedAt)}`}
-        >
-          <div className="statline">
-            <span>
-              template{" "}
-              <b>
-                {run.templateId} v{run.templateVersion}
-              </b>
-            </span>
-            <span title={`${cycle.used} fix cycle(s) used of ${cycle.max}`}>
-              <b>{cycle.label}</b>
-              {cycle.used > 0
-                ? ` · fixes run ${cycle.used}`
-                : " · no fix cycle"}
-            </span>
-            <span>
-              git policy <b>{run.policy.gitPolicy}</b>
-            </span>
-            <span>
-              next stage <b>{text(run.nextStageKey, "none")}</b>
-            </span>
-            <span>
-              attempts <b>{detail.data.attempts.length}</b>
-            </span>
-            <span>
-              events <b>{mergedEvents.length}</b>
-            </span>
+            </div>
           </div>
-          {run.constraints.length > 0 ? (
-            <details className="run-constraints">
-              <summary>{run.constraints.length} recorded constraints</summary>
-              <ul
-                className="stack--tight"
-                style={{ marginTop: 10, paddingLeft: 18 }}
-              >
-                {run.constraints.map((constraint) => (
-                  <li key={constraint} className="small">
-                    {constraint}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : (
-            <p className="faint small" style={{ marginTop: 8 }}>
-              No constraints recorded for this run.
-            </p>
-          )}
-        </Card>
+          {/* The project stays visible; path, id and dates are quiet below. */}
+          <p className="page-head__meta">{project?.name ?? run.projectId}</p>
+        </header>
 
-        <Card title={pending ? "Your decision" : "Run controls"}>
+        {/*
+         * A waiting gate is described by the decision sheet itself, so the
+         * banner is only rendered when there is no decision to show.
+         */}
+        {run.status === "WAITING_APPROVAL" && !pending ? (
+          <StateLine status={run.status} tone="accent">
+            The run is stopped until an operator decides.
+          </StateLine>
+        ) : null}
+        {run.status === "WAITING_INPUT" ? (
+          <StateLine status={run.status} tone="accent">
+            An agent is blocked on operator input. Supply the text below to
+            continue the attempt.
+          </StateLine>
+        ) : null}
+        {run.status === "FAILED" || run.status === "INTERRUPTED" ? (
+          <StateLine status={run.status} tone="danger">
+            {text(
+              run.failureReason ?? run.interruptReason,
+              "no reason recorded",
+            )}
+            . Resuming requires a deliberate retry with a reason.
+          </StateLine>
+        ) : null}
+        {run.status === "DRAFT" ? (
+          <StateLine status={run.status} tone="neutral">
+            This run is persisted but idle. Review the plan below, then start it
+            explicitly.
+          </StateLine>
+        ) : null}
+
+        {/* The single human decision sheet is the one elevated surface. */}
+        <Card
+          elevated={Boolean(pending)}
+          title={pending ? undefined : "Run controls"}
+        >
           <div className="stack">
             {action.error ? <ErrorBox error={action.error} /> : null}
             {formError ? <ErrorBox error={formError} /> : null}
@@ -502,36 +441,27 @@ export function RunView({
               </div>
             ) : null}
 
-            <div className="row">
+            {/* Quiet, secondary run controls: never a loud competitor to the
+                decision above. */}
+            <div className="run-quiet-controls">
               {canRetry ? (
-                <Button onClick={() => setShowRetry((current) => !current)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowRetry((current) => !current)}
+                >
                   {showRetry ? "Hide retry form" : "Retry with reason"}
                 </Button>
               ) : null}
-              {canCancel ? (
-                <Button
-                  variant="danger"
-                  onClick={() => setShowCancel((current) => !current)}
-                >
-                  {showCancel ? "Hide cancel form" : "Cancel run"}
-                </Button>
-              ) : (
+              {!canCancel ? (
                 <span className="faint small">
                   This run is terminal and cannot be restarted.
                 </span>
-              )}
-              <span className="faint small">
-                {needsHuman
-                  ? "A human decision is required before the engine can continue."
-                  : "No human gate is currently pending."}
-              </span>
+              ) : null}
             </div>
 
             {showRetry && canRetry ? (
-              <div
-                className="stack"
-                style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}
-              >
+              <div className="run-form">
                 <Field
                   label="Retry reason (mandatory)"
                   htmlFor="retry-reason"
@@ -570,11 +500,10 @@ export function RunView({
               </div>
             ) : null}
 
-            {showCancel && canCancel ? (
-              <div
-                className="stack"
-                style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}
-              >
+            {/* Cancellation is a quiet disclosure, never an always-visible
+                destructive primary competitor to the decision above. */}
+            {canCancel ? (
+              <Disclosure summary="Cancel this run">
                 <Field
                   label="Cancellation reason (mandatory)"
                   htmlFor="cancel-reason"
@@ -590,16 +519,70 @@ export function RunView({
                 <div className="row">
                   <Button
                     variant="danger"
+                    size="sm"
                     onClick={() => void submitCancel()}
                     disabled={action.pending || !cancelReason.trim()}
                   >
                     {action.pending ? "Cancelling…" : "Confirm cancellation"}
                   </Button>
                 </div>
-              </div>
+              </Disclosure>
             ) : null}
           </div>
         </Card>
+
+        {/* Run metadata and constraints: quiet, one level down. */}
+        <section className="run-details">
+          <Disclosure summary="Run details">
+            <dl className="kv">
+              <dt>Project</dt>
+              <dd>{project?.name ?? run.projectId}</dd>
+              <dt>Repository</dt>
+              <dd className="mono wrap-anywhere">{run.projectRoot}</dd>
+              <dt>Template</dt>
+              <dd>
+                {run.templateId} v{run.templateVersion}
+              </dd>
+              <dt>Review cycle</dt>
+              <dd title={`${cycle.used} fix cycle(s) used of ${cycle.max}`}>
+                {cycle.label}
+                {cycle.used > 0
+                  ? ` · fixes run ${cycle.used}`
+                  : " · no fix cycle"}
+              </dd>
+              <dt>Git policy</dt>
+              <dd>{run.policy.gitPolicy}</dd>
+              <dt>Next stage</dt>
+              <dd>{text(run.nextStageKey, "none")}</dd>
+              <dt>Attempts</dt>
+              <dd>{detail.data.attempts.length}</dd>
+              <dt>Events</dt>
+              <dd>{mergedEvents.length}</dd>
+              <dt>Run id</dt>
+              <dd className="mono wrap-anywhere">{run.id}</dd>
+              <dt>Created</dt>
+              <dd>
+                {formatTimestamp(run.createdAt)} · updated{" "}
+                {relativeTime(run.updatedAt)}
+              </dd>
+              <dt>Constraints</dt>
+              <dd>
+                {run.constraints.length > 0 ? (
+                  <ul
+                    className="stack--tight"
+                    style={{ margin: 0, paddingLeft: 18 }}
+                  >
+                    {run.constraints.map((constraint) => (
+                      <li key={constraint}>{constraint}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  "No constraints recorded for this run."
+                )}
+              </dd>
+            </dl>
+          </Disclosure>
+        </section>
 
         <div className="grid grid--run">
           {rail ? (

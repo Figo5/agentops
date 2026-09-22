@@ -1,18 +1,28 @@
+/**
+ * One run row, shared by the operational home and the history view.
+ *
+ * A row answers four questions in order: which project, what the goal was, how
+ * it stands, and how long ago it moved. The status is a single semantic icon +
+ * word (never duplicated), the time is quiet, and the action is an explicit
+ * link-style control the operator can click or tab to.
+ *
+ * Every field is rendered from the persisted record; nothing is synthesised.
+ */
 import type { ReactNode } from "react";
 import type { RunListRecord } from "../ui-types.js";
-import {
-  relativeTime,
-  routeHref,
-  statusLabel,
-  verdictLabel,
-  verdictTone,
-} from "../view-model.js";
-import { Pill, StatusPill } from "./Bits.js";
+import { relativeTime, routeHref, statusLabel } from "../view-model.js";
+import { StatusPill } from "./Bits.js";
 
-/**
- * One run row, shared by the dashboard and the history view. Every field is
- * rendered from the persisted record; nothing is synthesised.
- */
+/** What the operator can do next with this run, in one word. */
+function actionLabel(run: RunListRecord): string {
+  if (run.status === "WAITING_APPROVAL" || run.status === "WAITING_INPUT")
+    return "Review";
+  if (run.status === "FAILED" || run.status === "INTERRUPTED") return "Retry";
+  if (run.status === "DRAFT") return "Start";
+  if (run.status === "RUNNING") return "Open";
+  return "View";
+}
+
 export function RunRow({
   run,
   projectName,
@@ -22,120 +32,72 @@ export function RunRow({
   projectName?: string;
   right?: ReactNode;
 }) {
-  const branch = run.branch ?? null;
-  const verdict = run.lastReviewVerdict ?? null;
+  const href = routeHref({ view: "run", runId: run.id });
   return (
-    <a
-      className="list__row"
-      href={routeHref({ view: "run", runId: run.id })}
-      aria-label={`Open run: ${run.goal}`}
-    >
-      <div className="list__goal">
-        <b title={run.goal}>{run.goal}</b>
-        <span className="list__meta">
-          <span>{projectName ?? run.projectId}</span>
+    <div className="run-row">
+      <div className="run-row__text">
+        <b className="run-row__goal" title={run.goal}>
+          {run.goal}
+        </b>
+        <span className="run-row__meta">
+          <span className="run-row__project">
+            {projectName ?? run.projectId}
+          </span>
           <span aria-hidden="true">·</span>
           <span title={run.updatedAt}>
             updated {relativeTime(run.updatedAt)}
           </span>
-          <span aria-hidden="true">·</span>
-          <span>
-            {run.templateId} v{run.templateVersion}
-          </span>
-          {branch ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span className="mono">{branch}</span>
-            </>
-          ) : null}
-          {verdict ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <Pill tone={verdictTone(verdict)} dot={false}>
-                {verdictLabel(verdict)}
-              </Pill>
-            </>
-          ) : null}
-          {run.status === "WAITING_APPROVAL" ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <Pill
-                tone="warn"
-                dot={false}
-                title="The run is waiting for a human decision"
-              >
-                {statusLabel(run.status)}
-              </Pill>
-            </>
-          ) : null}
         </span>
       </div>
-      <div className="list__right">
-        {right}
-        <StatusPill status={run.status} />
+      <div className="run-row__status">
+        <StatusPill
+          status={run.status}
+          title={`${statusLabel(run.status)} (${run.status})`}
+        />
       </div>
-    </a>
+      {right ? <div className="run-row__extra">{right}</div> : null}
+      <a className="run-row__link" href={href}>
+        {actionLabel(run)}
+        <span aria-hidden="true">›</span>
+      </a>
+    </div>
   );
 }
 
+/**
+ * One calm home section: a heading with a count, then hairline-separated rows.
+ *
+ * Rendered only when it has content — an empty category is a fact about the
+ * run list, not a card that needs to be on screen.
+ */
 export function RunSection({
   title,
-  tone,
   runs,
   projectNames,
-  emptyLabel,
   hint,
 }: {
   title: string;
-  tone: "accent" | "neutral" | "danger";
   runs: RunListRecord[];
   projectNames: Record<string, string>;
-  emptyLabel: string;
   hint?: string;
 }) {
+  if (runs.length === 0) return null;
   return (
-    <section className="card">
-      <div className="card__head">
-        <h2>
-          {title}{" "}
-          <Pill tone={tone === "accent" ? "active" : tone}>{runs.length}</Pill>
-        </h2>
+    <section className="home-section">
+      <div className="home-section__head">
+        <h2>{title}</h2>
+        <span className="home-section__count">{runs.length}</span>
       </div>
-      {hint ? <p className="card__hint">{hint}</p> : null}
-      {runs.length === 0 ? (
-        <p className="faint small">{emptyLabel}</p>
-      ) : (
-        <div className="list">
-          {runs.map((run) => (
-            <RunRow
-              key={run.id}
-              run={run}
-              projectName={projectNames[run.projectId]}
-            />
-          ))}
-        </div>
-      )}
+      {hint ? <p className="home-section__hint">{hint}</p> : null}
+      <div className="run-list">
+        {runs.map((run) => (
+          <RunRow
+            key={run.id}
+            run={run}
+            projectName={projectNames[run.projectId]}
+          />
+        ))}
+      </div>
     </section>
-  );
-}
-
-/** Tiny presentational helper so dashboards keep a consistent tone legend. */
-export function StatusLegend() {
-  const entries: { status: string; label: string }[] = [
-    { status: "RUNNING", label: "engine working" },
-    { status: "WAITING_APPROVAL", label: "human decision required" },
-    { status: "FAILED", label: "stopped at a failing gate" },
-    { status: "COMPLETED", label: "accepted and closed" },
-  ];
-  return (
-    <div className="row row--tight">
-      {entries.map((entry) => (
-        <StatusPill
-          key={entry.status}
-          status={entry.status}
-          title={entry.label}
-        />
-      ))}
-    </div>
   );
 }

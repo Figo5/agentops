@@ -31,6 +31,7 @@ import {
   Checkbox,
   CodeBlock,
   DiffView,
+  Disclosure,
   EmptyState,
   ErrorBox,
   Field,
@@ -311,7 +312,7 @@ export function ProjectEditor({
 
         <fieldset
           style={{
-            border: "1px solid var(--border)",
+            border: "1px solid var(--hairline-2)",
             borderRadius: "var(--radius-sm)",
             padding: "10px 12px",
           }}
@@ -803,21 +804,19 @@ export function ProjectsView({
         </Card>
       ) : null}
       {projects.length > 0 ? (
-        <details className="card">
-          <summary style={{ cursor: "pointer" }}>
-            Register another project
-          </summary>
-          <div style={{ marginTop: 12 }}>
-            <ProjectEditor
-              client={client}
-              projects={projects}
-              refreshBootstrap={refreshBootstrap}
-              onCreated={(project) => {
-                window.location.hash = `#/projects/${project.id}`;
-              }}
-            />
-          </div>
-        </details>
+        <Disclosure
+          className="card disclosure--card"
+          summary="Register another project"
+        >
+          <ProjectEditor
+            client={client}
+            projects={projects}
+            refreshBootstrap={refreshBootstrap}
+            onCreated={(project) => {
+              window.location.hash = `#/projects/${project.id}`;
+            }}
+          />
+        </Disclosure>
       ) : null}
     </div>
   );

@@ -73,12 +73,12 @@ test("first-run registration, stage plan, live run, exact prompt, approval and r
       .poll(() => app.store.listRuns()[0]?.status, { timeout: 15000 })
       .toBe("WAITING_APPROVAL");
     await expect(
-      page.getByText("WAITING FOR YOU", { exact: true }).first(),
+      page.getByText("Waiting for you", { exact: true }).first(),
     ).toBeVisible();
     // The final human gate accepts the run explicitly; the decision buttons
     // appear after the persisted evidence for that gate.
     await expect(
-      page.getByText("Final acceptance gate", { exact: true }),
+      page.getByText("Ready for your review", { exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Accept run", exact: true }).click();
     await expect.poll(() => app.store.listRuns()[0]?.status).toBe("COMPLETED");
@@ -170,9 +170,9 @@ test("retry preserves the failed attempt and exposes the reviewer verdict", asyn
       .filter((a) => a.stageKey === "implement");
     expect(attempts.map((a) => a.status)).toEqual(["FAILED", "COMPLETED"]);
     await page.getByRole("button", { name: /Implementation task/ }).click();
-    await expect(page.getByRole("button", { name: /#1 FAILED/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /#1 Failed/ })).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /#2 COMPLETED/ }),
+      page.getByRole("button", { name: /#2 Completed/ }),
     ).toBeVisible();
   } finally {
     await app.close();
@@ -223,17 +223,27 @@ test("a rejection gate shows evidence first, collects a reason only after the de
 
     await page.goto(`http://127.0.0.1:${port}/#/run/${run.id}`);
     await expect(
-      page.getByText("Review rejected — human decision required").first(),
+      page.getByText("Review rejected — your call").first(),
     ).toBeVisible();
 
     // Evidence is rendered before the decision buttons and carries the persisted
     // verdict, the reviewer resolved from the recorded attempt, and the counts
     // correlated from the normalized test run.
     const evidence = page.locator(".approval-evidence");
-    await expect(evidence).toContainText("REJECT");
+    await expect(evidence).toContainText("Reject");
     await expect(evidence).toContainText("7/7 passed");
     await expect(evidence).toContainText("counts from the normalized test run");
     await expect(evidence).toContainText(reviewer.name);
+    // The default view is the concise summary; the full prose and provenance
+    // live behind disclosures that are present but collapsed.
+    await expect(evidence).toContainText("1 blocker");
+    await expect(evidence).toContainText("7 tests passed");
+    await expect(
+      evidence.getByText("Read full review (1 blocker)", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator("details.disclosure").first(),
+    ).not.toHaveAttribute("open", "");
     await expect(
       page.getByRole("button", { name: "Reject with override" }),
     ).toHaveCount(0);

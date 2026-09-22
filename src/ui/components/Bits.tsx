@@ -10,6 +10,7 @@ import type { ChangeEvent, KeyboardEvent, ReactNode } from "react";
 import type { DiffLine } from "../view-model.js";
 import {
   classNames,
+  statusIcon,
   statusLabel,
   statusTone,
   type Tone,
@@ -36,6 +37,40 @@ export function Pill({
   );
 }
 
+/**
+ * A status is an icon plus a word, in the system sans at metadata scale.
+ *
+ * Both parts come from the payload: the glyph encodes the tone, the word is
+ * the persisted state, and the raw enum stays reachable as the `title` so the
+ * display copy never replaces the recorded value.
+ */
+export function StatusMark({
+  status,
+  size = "sm",
+  className,
+}: {
+  status: string | null | undefined;
+  size?: "sm" | "lg";
+  className?: string;
+}) {
+  return (
+    <span
+      className={classNames(
+        "status",
+        `status--${statusTone(status)}`,
+        size === "lg" && "status--lg",
+        className,
+      )}
+      title={status ?? undefined}
+    >
+      <span className="status__icon" aria-hidden="true">
+        {statusIcon(status)}
+      </span>
+      <span className="status__word">{statusLabel(status)}</span>
+    </span>
+  );
+}
+
 export function StatusPill({
   status,
   title,
@@ -44,9 +79,72 @@ export function StatusPill({
   title?: string;
 }) {
   return (
-    <Pill tone={statusTone(status)} title={title}>
-      {statusLabel(status)}
-    </Pill>
+    <span
+      className={classNames(
+        "pill",
+        "pill--status",
+        `pill--${statusTone(status)}`,
+      )}
+      title={title ?? status ?? undefined}
+    >
+      <span className="status__icon" aria-hidden="true">
+        {statusIcon(status)}
+      </span>
+      <span className="status__word">{statusLabel(status)}</span>
+    </span>
+  );
+}
+
+/**
+ * The one consistent expander for long or technical content.
+ *
+ * Everything that is long (review prose, raw payloads, provenance, constraints)
+ * lives behind one of these so the default view of a screen stays readable. The
+ * body is rendered by the caller, so native `details` still holds the content.
+ */
+export function Disclosure({
+  summary,
+  children,
+  className,
+  open = false,
+}: {
+  summary: ReactNode;
+  children: ReactNode;
+  className?: string;
+  open?: boolean;
+}) {
+  return (
+    <details className={classNames("disclosure", className)} open={open}>
+      <summary>{summary}</summary>
+      <div className="disclosure__body">{children}</div>
+    </details>
+  );
+}
+
+/** A compact state line: icon + word + sentence, instead of a shouted banner. */
+export function StateLine({
+  status,
+  tone,
+  children,
+  title,
+}: {
+  status?: string | null;
+  tone: "accent" | "warn" | "danger" | "neutral";
+  children: ReactNode;
+  title?: string;
+}) {
+  return (
+    <div
+      className={classNames(
+        "state-line",
+        tone !== "neutral" && `state-line--${tone}`,
+      )}
+      role="status"
+      title={title}
+    >
+      {status ? <StatusMark status={status} size="sm" /> : null}
+      <span>{children}</span>
+    </div>
   );
 }
 
@@ -93,6 +191,7 @@ export function Card({
   children,
   hint,
   tight,
+  elevated,
   id,
 }: {
   title?: ReactNode;
@@ -100,10 +199,21 @@ export function Card({
   children: ReactNode;
   hint?: ReactNode;
   tight?: boolean;
+  /** Raised surface. Reserved for genuinely interactive objects and the single
+   * human decision sheet — every other card is a flat, hairline-separated
+   * section. */
+  elevated?: boolean;
   id?: string;
 }) {
   return (
-    <section className={classNames("card", tight && "card--tight")} id={id}>
+    <section
+      className={classNames(
+        "card",
+        tight && "card--tight",
+        elevated && "card--elevated",
+      )}
+      id={id}
+    >
       {(title || actions) && (
         <div className="card__head">
           {title ? <h2>{title}</h2> : null}
@@ -374,7 +484,7 @@ export function EmptyState({
                   {step.label}
                 </button>
               ) : (
-                <span style={{ color: step.done ? "var(--mint)" : undefined }}>
+                <span style={{ color: step.done ? "var(--ok)" : undefined }}>
                   {step.label}
                 </span>
               )}

@@ -27,6 +27,7 @@ import {
   agentToForm,
   approvalDecisionOptions,
   approvalEvidenceView,
+  approvalSummaryLine,
   artifactView,
   attemptCountsView,
   buildRunSearchParams,
@@ -42,7 +43,11 @@ import {
   formatBytes,
   formatCount,
   formatDuration,
+  greetingFor,
   homeSections,
+  homeSummary,
+  issueDisposition,
+  issueTally,
   lastEventId,
   mergeEvents,
   parseArgsJson,
@@ -56,6 +61,7 @@ import {
   promptComparisons,
   reviewerIdentity,
   reviewerName,
+  reviewerProvenanceLabel,
   reviewCycleView,
   routeHref,
   runMatchesSearch,
@@ -77,6 +83,7 @@ import {
   verdictTone,
   verificationCountsLabel,
   verificationLabel,
+  verificationShortLabel,
 } from "../src/ui/view-model.js";
 
 /* ------------------------------- fixtures ------------------------------ */
@@ -252,14 +259,14 @@ test("usage unknown is explicit and never zeros", () => {
 });
 
 test("status labels and tones cover the persisted state machine", () => {
-  assert.equal(statusLabel("WAITING_APPROVAL"), "WAITING FOR YOU");
+  assert.equal(statusLabel("WAITING_APPROVAL"), "Waiting for you");
   assert.equal(statusTone("WAITING_APPROVAL"), "warn");
   assert.equal(statusTone("RUNNING"), "active");
   assert.equal(statusTone("COMPLETED"), "success");
   assert.equal(statusTone("FAILED"), "danger");
   assert.equal(statusTone("SKIPPED"), "warn");
   assert.equal(statusLabel("SOMETHING_NEW"), "SOMETHING_NEW");
-  assert.equal(verdictLabel(null, false), "INVALID VERDICT PAYLOAD");
+  assert.equal(verdictLabel(null, false), "Invalid verdict payload");
   assert.equal(verdictTone("REJECT"), "danger");
 });
 
@@ -748,7 +755,7 @@ test("client-side run matching mirrors the server filters", () => {
   );
 });
 
-test("home sections place each run in exactly one bucket", () => {
+test("home summary keeps only actionable sections and counts attention", () => {
   const runs = [
     run("RUNNING", "2026-09-22T12:00:00.000Z", "r1"),
     run("WAITING_APPROVAL", "2026-09-22T11:00:00.000Z", "r2"),
@@ -758,29 +765,38 @@ test("home sections place each run in exactly one bucket", () => {
     run("CANCELLED", "2026-09-22T07:00:00.000Z", "r6"),
     run("DRAFT", "2026-09-22T06:00:00.000Z", "r7"),
   ];
-  const sections = homeSections(runs);
+  const summary = homeSummary(runs);
+  // Gates and failures both mean "an operator has to do something" — newest
+  // first, and never double-counted with the running list.
   assert.deepEqual(
-    sections.active.map((entry) => entry.id),
+    summary.needsYou.map((entry) => entry.id),
+    ["r2", "r3", "r4"],
+  );
+  assert.deepEqual(
+    summary.running.map((entry) => entry.id),
     ["r1"],
   );
   assert.deepEqual(
-    sections.waiting.map((entry) => entry.id),
-    ["r2", "r3"],
-  );
-  assert.deepEqual(
-    sections.failed.map((entry) => entry.id),
-    ["r4"],
-  );
-  assert.deepEqual(
-    sections.recent.map((entry) => entry.id),
+    summary.recent.map((entry) => entry.id),
     ["r5", "r6", "r7"],
   );
-  const total =
-    sections.active.length +
-    sections.waiting.length +
-    sections.failed.length +
-    sections.recent.length;
-  assert.equal(total, runs.length);
+  assert.equal(summary.attention, 4);
+  assert.equal(summary.attentionLabel, "3 need you · 1 running");
+
+  const quiet = homeSummary([runs[4]!]);
+  assert.deepEqual(quiet.needsYou, []);
+  assert.deepEqual(quiet.running, []);
+  assert.equal(quiet.attention, 0);
+  assert.equal(quiet.attentionLabel, "Nothing needs you right now");
+
+  const runningOnly = homeSummary([runs[0]!]);
+  assert.equal(runningOnly.attentionLabel, "1 running");
+
+  // The greeting is deterministic from the clock the caller supplies.
+  assert.equal(greetingFor(new Date("2026-09-22T02:00:00")), "Still up");
+  assert.equal(greetingFor(new Date("2026-09-22T09:00:00")), "Good morning");
+  assert.equal(greetingFor(new Date("2026-09-22T14:00:00")), "Good afternoon");
+  assert.equal(greetingFor(new Date("2026-09-22T20:00:00")), "Good evening");
 });
 
 /* -------------------------------- routing ------------------------------ */
@@ -1263,7 +1279,7 @@ test("approval evidence is read from the persisted record", () => {
   assert.equal(evidence.gateLabel, "Review rejected — human decision required");
   assert.equal(evidence.stageKey, "review");
   assert.equal(evidence.cycle.label, "review cycle 2 of 2");
-  assert.equal(evidence.verdict!.label, "REJECT");
+  assert.equal(evidence.verdict!.label, "Reject");
   assert.equal(evidence.verdict!.tone, "danger");
   assert.equal(evidence.verdict!.stageKey, "review");
   // The real payloads omit `reviewer`, but the verdict records the attempt that
@@ -1402,6 +1418,208 @@ test("approval evidence is read from the persisted record", () => {
       attempts: [],
     }),
     null,
+  );
+});
+
+test("the concise gate summary uses the durable reviewer and one verification attempt", () => {
+  // The shape the real dogfood run persists: the verdict omits `reviewer`
+  // (resolved through the verdict's attempt to the agent record), the review
+  // carries two `nit` findings, and the run has TWO 7-test records (verify and
+  // final_verify) which must never be added up to 14.
+  const attempts = [
+    {
+      id: "att_verify",
+      attemptNumber: 1,
+      stageKey: "verify",
+      agentId: null,
+      reviewVerdictId: null,
+      verification: {
+        status: "passed" as const,
+        mode: "commands",
+        commandCount: 1,
+        counts: null,
+        summary: "test: 7 passed, 0 failed",
+        reason: null,
+      },
+    },
+    {
+      id: "att_review",
+      attemptNumber: 1,
+      stageKey: "review",
+      agentId: "agt_claude",
+      reviewVerdictId: "rev-1",
+      verification: null,
+    },
+    {
+      id: "att_final_verify",
+      attemptNumber: 1,
+      stageKey: "final_verify",
+      agentId: null,
+      reviewVerdictId: null,
+      verification: {
+        status: "passed" as const,
+        mode: "commands",
+        commandCount: 1,
+        counts: null,
+        summary: "test: 7 passed, 0 failed",
+        reason: null,
+      },
+    },
+  ];
+  const tests = [
+    {
+      attemptId: "att_verify",
+      framework: "node:test",
+      passed: 7,
+      failed: 0,
+      skipped: 0,
+      total: 7,
+      parsedConfidently: true,
+      createdAt: "2026-09-22T17:51:06.107Z",
+    },
+    {
+      attemptId: "att_final_verify",
+      framework: "node:test",
+      passed: 7,
+      failed: 0,
+      skipped: 0,
+      total: 7,
+      parsedConfidently: true,
+      createdAt: "2026-09-22T17:51:22.176Z",
+    },
+  ];
+  const evidence = approvalEvidenceView({
+    // The final human gate: the gate stage itself is `final` and has no
+    // verification of its own, so the evidence falls back to the newest
+    // verification in the run and names it.
+    approval: { gate: "final_acceptance", reason: null, stageKey: "final" },
+    reviewCycle: reviewCycleView({
+      reviewCycle: 1,
+      policy: { maxReviewCycles: 2 },
+    }),
+    verdicts: [
+      {
+        id: "rev-1",
+        runId: "run-1",
+        taskId: "task-review",
+        attemptId: "att_review",
+        stageKey: "review",
+        cycle: 1,
+        valid: true,
+        validationErrors: [],
+        verdict: "APPROVE",
+        summary: "greeting.mjs implements exactly the requested validation.",
+        issues: [
+          {
+            severity: "nit",
+            description: "TypeError message for null reads 'received object'.",
+            path: "greeting.mjs",
+            line: 3,
+          },
+          {
+            severity: "nit",
+            description: "Tests assert the error class but not the message.",
+            path: "greeting.test.mjs",
+            line: 8,
+          },
+        ],
+        confidence: 0.93,
+        reviewer: null,
+        raw: "{}",
+        createdAt: "2026-09-22T17:51:21.716Z",
+      },
+    ],
+    attempts,
+    tests,
+    agents: [{ id: "agt_claude", name: "Claude" }],
+  })!;
+
+  // Identity comes from the recorded attempt, not from a missing field.
+  assert.equal(evidence.verdict!.reviewer, "Claude");
+  assert.equal(evidence.verdict!.reviewerSource, "reviewer attempt agent");
+  assert.match(
+    reviewerProvenanceLabel({
+      name: "Claude",
+      source: "reviewer attempt agent",
+      agentId: "agt_claude",
+    }),
+    /resolved through the verdict's attempt \(agt_claude\)/,
+  );
+  // Two `nit` findings are two suggestions, and the severity word survives.
+  assert.equal(evidence.verdict!.tally.label, "2 suggestions");
+  assert.equal(evidence.verdict!.tally.blockers, 0);
+  assert.deepEqual(
+    evidence.verdict!.issues.map((issue) => issueDisposition(issue.severity)),
+    ["suggestion", "suggestion"],
+  );
+  assert.equal(evidence.verdict!.issues[0]!.location, "greeting.mjs:3");
+  // One verification attempt, never a sum of the two 7-test records.
+  assert.equal(evidence.verification!.stageKey, "final_verify");
+  assert.equal(evidence.verification!.shortLabel, "7 tests passed");
+  assert.equal(
+    approvalSummaryLine(evidence),
+    "Claude approved · 7 tests passed",
+  );
+
+  // The gate with no verdict and no verification says so plainly, without
+  // boilerplate about a reason that was never recorded.
+  const bare = approvalEvidenceView({
+    approval: { gate: "review_reject", reason: null, stageKey: "review" },
+    reviewCycle: reviewCycleView({
+      reviewCycle: 2,
+      policy: { maxReviewCycles: 2 },
+    }),
+    verdicts: [],
+    attempts: [],
+  })!;
+  assert.equal(
+    approvalSummaryLine(bare),
+    "No review verdict recorded for this gate · No verification recorded",
+  );
+  assert.equal(bare.reason, null);
+});
+
+test("issue dispositions and short verification labels stay honest about counts", () => {
+  assert.equal(issueDisposition("blocking"), "blocker");
+  assert.equal(issueDisposition("BLOCKING"), "blocker");
+  assert.equal(issueDisposition("blocking "), "blocker");
+  for (const severity of ["major", "minor", "nit", "cosmetic"])
+    assert.equal(issueDisposition(severity), "suggestion");
+  assert.deepEqual(
+    issueTally([
+      { severity: "blocking" },
+      { severity: "nit" },
+      { severity: "minor" },
+    ]),
+    {
+      blockers: 1,
+      suggestions: 2,
+      empty: false,
+      label: "1 blocker · 2 suggestions",
+    },
+  );
+  assert.equal(issueTally([]).empty, true);
+  assert.equal(issueTally([]).label, "No issues recorded");
+
+  // A single test is not "1 tests"; a failed count is reported as a fraction.
+  assert.equal(
+    verificationShortLabel({
+      status: "passed",
+      counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+    }),
+    "1 test passed",
+  );
+  assert.equal(
+    verificationShortLabel({
+      status: "failed",
+      counts: { passed: 5, failed: 2, skipped: 0, total: 7 },
+    }),
+    "5 of 7 tests passed",
+  );
+  // Counts that were never parsed are absent, not zero.
+  assert.equal(
+    verificationShortLabel({ status: "passed", counts: null }),
+    "Command passed, test count unavailable",
   );
 });
 
