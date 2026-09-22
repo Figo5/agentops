@@ -2753,7 +2753,8 @@ export type Route =
   | { view: "agents" }
   | { view: "runs"; search: RunSearchForm }
   | { view: "run"; runId: string }
-  | { view: "new-run"; projectId: string | null };
+  | { view: "new-run"; projectId: string | null }
+  | { view: "settings" };
 
 export function parseRoute(hash: string): Route {
   const clean = hash.replace(/^#/, "").replace(/^\/+/, "");
@@ -2776,6 +2777,8 @@ export function parseRoute(hash: string): Route {
       return { view: "projects", projectId: second ?? null };
     case "agents":
       return { view: "agents" };
+    case "settings":
+      return { view: "settings" };
     case "runs":
       return { view: "runs", search };
     case "run":
@@ -2807,6 +2810,8 @@ export function routeHref(route: Route): string {
       return route.projectId
         ? `#/new-run/${encodeURIComponent(route.projectId)}`
         : "#/new-run";
+    case "settings":
+      return "#/settings";
     default:
       return "#/";
   }

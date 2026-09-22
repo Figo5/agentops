@@ -14,7 +14,13 @@
  * retry (with a mandatory reason), cancel (with a mandatory reason), approval
  * decisions limited to `pendingApproval.allowed`, and operator input.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import type {
   ApprovalDecision,
   EventRecord,
@@ -22,6 +28,7 @@ import type {
 } from "../../core/types.js";
 import type { AgentOpsClient, Bootstrap } from "../api.js";
 import { useAction, useRunDetail } from "../hooks.js";
+import { reducedMotionNow } from "../preferences.js";
 import {
   approvalDecisionOptions,
   approvalEvidenceView,
@@ -93,6 +100,11 @@ const FAILURE_STATUSES = new Set(["FAILED", "INTERRUPTED", "CANCELLED"]);
  * Only ever called from an explicit navigation — a tab click, a keyboard tab
  * selection or an evidence button. The initial load of a run stays at the top
  * of the page, so the header is still the first thing an operator sees.
+ *
+ * Motion is resolved through the same preference every other surface uses: an
+ * explicit device preference (Settings → Display) wins, and `system` defers to
+ * the OS. This is an imperative scroll, so it cannot rely on the CSS rule — it
+ * reads the applied preference itself.
  */
 function revealRunTabs(): void {
   if (typeof document === "undefined") return;
@@ -107,13 +119,10 @@ function revealRunTabs(): void {
   list
     .closest<HTMLElement>(".run-view")
     ?.style.setProperty("--sticky-offset", `${offset}px`);
-  const reduceMotion =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   list.scrollIntoView({
     block: "start",
     inline: "nearest",
-    behavior: reduceMotion ? "auto" : "smooth",
+    behavior: reducedMotionNow() ? "auto" : "smooth",
   });
 }
 
@@ -378,18 +387,21 @@ export function RunView({
       data.attempts.some((attempt) => attempt.verification !== null),
     hasReview: data.reviewVerdicts.length > 0,
     counts: {
-      changes: changedFilesView({
-        snapshot:
-          [...data.snapshots].sort((a, b) =>
-            a.capturedAt.localeCompare(b.capturedAt),
-          )[Math.max(0, data.snapshots.length - 1)] ?? null,
-      }).count ?? undefined,
+      changes:
+        changedFilesView({
+          snapshot:
+            [...data.snapshots].sort((a, b) =>
+              a.capturedAt.localeCompare(b.capturedAt),
+            )[Math.max(0, data.snapshots.length - 1)] ?? null,
+        }).count ?? undefined,
       review: data.reviewVerdicts.length,
     },
   });
   const hasTab = (id: RunTabId) => tabs.some((entry) => entry.id === id);
 
-  const facts = evidence ? decisionFacts({ evidence, snapshots: data.snapshots }) : [];
+  const facts = evidence
+    ? decisionFacts({ evidence, snapshots: data.snapshots })
+    : [];
   const testView = evidence?.verification
     ? latestTestsForAttempt(
         data.tests,
@@ -534,9 +546,7 @@ export function RunView({
           <h2 className={classNames("run-state", `run-state--${state.tone}`)}>
             {state.headline}
           </h2>
-          {state.detail ? (
-            <p className="faint small">{state.detail}</p>
-          ) : null}
+          {state.detail ? <p className="faint small">{state.detail}</p> : null}
         </div>
       </header>
 
@@ -562,105 +572,105 @@ export function RunView({
         >
           <div className="stack">
             {action.error ? <ErrorBox error={action.error} /> : null}
-          {formError ? <ErrorBox error={formError} /> : null}
-          {action.notice ? (
-            <Notice tone="success">{action.notice}</Notice>
-          ) : null}
+            {formError ? <ErrorBox error={formError} /> : null}
+            {action.notice ? (
+              <Notice tone="success">{action.notice}</Notice>
+            ) : null}
 
-          {pending && evidence ? (
-            <ApprovalPanel
-              evidence={evidence}
-              options={decisions}
-              facts={facts}
-              latestTests={testView.rows}
-              testsHidden={testView.hidden}
-              selected={selectedDecision}
-              reason={decisionReason}
-              busy={action.pending}
-              error={formError}
-              onSelect={setSelectedDecision}
-              onReasonChange={setDecisionReason}
-              onReviewChanges={
-                pending.gate === "final_acceptance" && hasTab("changes")
-                  ? () => openTab("changes")
-                  : undefined
-              }
-              onOpenReview={
-                pending.gate !== "final_acceptance" &&
-                evidence.verdict &&
-                hasTab("review")
-                  ? () => openTab("review")
-                  : undefined
-              }
-              showDetails={false}
-              onCancel={() => {
-                setSelectedDecision(null);
-                setDecisionReason("");
-                setFormError(null);
-              }}
-              onConfirm={(decision) => void submitDecision(decision)}
-            />
-          ) : null}
-
-          {run.status === "WAITING_APPROVAL" && !pending ? (
-            <StateLine status={run.status} tone="accent">
-              This run is stopped until an operator decides, but the gate payload
-              has not loaded yet.
-            </StateLine>
-          ) : null}
-
-          {run.status === "WAITING_INPUT" ? (
-            <InputRequest
-              question={question}
-              stageName={activeStage?.name ?? null}
-              value={operatorInput}
-              onChange={setOperatorInput}
-              onSubmit={() => void submitInput()}
-              busy={action.pending}
-            />
-          ) : null}
-
-          {isFailure ? (
-            <div className="stack">
-              <h2 className="run-sheet__headline">{state.headline}</h2>
-              <FailureEvidence
-                stage={failedStage}
-                reason={run.failureReason ?? run.interruptReason}
-                attempts={data.attempts.length}
+            {pending && evidence ? (
+              <ApprovalPanel
+                evidence={evidence}
+                options={decisions}
+                facts={facts}
+                latestTests={testView.rows}
+                testsHidden={testView.hidden}
+                selected={selectedDecision}
+                reason={decisionReason}
+                busy={action.pending}
+                error={formError}
+                onSelect={setSelectedDecision}
+                onReasonChange={setDecisionReason}
+                onReviewChanges={
+                  pending.gate === "final_acceptance" && hasTab("changes")
+                    ? () => openTab("changes")
+                    : undefined
+                }
+                onOpenReview={
+                  pending.gate !== "final_acceptance" &&
+                  evidence.verdict &&
+                  hasTab("review")
+                    ? () => openTab("review")
+                    : undefined
+                }
+                showDetails={false}
+                onCancel={() => {
+                  setSelectedDecision(null);
+                  setDecisionReason("");
+                  setFormError(null);
+                }}
+                onConfirm={(decision) => void submitDecision(decision)}
               />
-              {showRetry ? (
-                <RetryForm
-                  reason={retryReason}
-                  instruction={retryInstruction}
-                  onReasonChange={setRetryReason}
-                  onInstructionChange={setRetryInstruction}
-                  onSubmit={() => void submitRetry()}
-                  busy={action.pending}
-                />
-              ) : (
-                <div className="row">
-                  <Button
-                    variant="primary"
-                    onClick={() => setShowRetry(true)}
-                    disabled={action.pending}
-                  >
-                    Retry with reason
-                  </Button>
-                  <span className="faint small">
-                    Resuming needs a deliberate retry with a reason. The failed
-                    attempt is kept and never overwritten.
-                  </span>
-                </div>
-              )}
-            </div>
-          ) : null}
+            ) : null}
 
-          {canStart ? (
-            <StartRunBlock
-              onStart={() => void action.run((c) => c.startRun(run.id))}
-              busy={action.pending}
-            />
-          ) : null}
+            {run.status === "WAITING_APPROVAL" && !pending ? (
+              <StateLine status={run.status} tone="accent">
+                This run is stopped until an operator decides, but the gate
+                payload has not loaded yet.
+              </StateLine>
+            ) : null}
+
+            {run.status === "WAITING_INPUT" ? (
+              <InputRequest
+                question={question}
+                stageName={activeStage?.name ?? null}
+                value={operatorInput}
+                onChange={setOperatorInput}
+                onSubmit={() => void submitInput()}
+                busy={action.pending}
+              />
+            ) : null}
+
+            {isFailure ? (
+              <div className="stack">
+                <h2 className="run-sheet__headline">{state.headline}</h2>
+                <FailureEvidence
+                  stage={failedStage}
+                  reason={run.failureReason ?? run.interruptReason}
+                  attempts={data.attempts.length}
+                />
+                {showRetry ? (
+                  <RetryForm
+                    reason={retryReason}
+                    instruction={retryInstruction}
+                    onReasonChange={setRetryReason}
+                    onInstructionChange={setRetryInstruction}
+                    onSubmit={() => void submitRetry()}
+                    busy={action.pending}
+                  />
+                ) : (
+                  <div className="row">
+                    <Button
+                      variant="primary"
+                      onClick={() => setShowRetry(true)}
+                      disabled={action.pending}
+                    >
+                      Retry with reason
+                    </Button>
+                    <span className="faint small">
+                      Resuming needs a deliberate retry with a reason. The
+                      failed attempt is kept and never overwritten.
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {canStart ? (
+              <StartRunBlock
+                onStart={() => void action.run((c) => c.startRun(run.id))}
+                busy={action.pending}
+              />
+            ) : null}
           </div>
         </Card>
       ) : null}
@@ -676,7 +686,11 @@ export function RunView({
         tabs={tabs}
       />
 
-      <TabPanel idBase={RUN_TABS_ID} id="overview" selected={tab === "overview"}>
+      <TabPanel
+        idBase={RUN_TABS_ID}
+        id="overview"
+        selected={tab === "overview"}
+      >
         {tab === "overview" ? (
           <OverviewPanel
             client={client}
@@ -833,7 +847,10 @@ export function RunView({
           <dt>Constraints</dt>
           <dd>
             {run.constraints.length > 0 ? (
-              <ul className="stack--tight" style={{ margin: 0, paddingLeft: 18 }}>
+              <ul
+                className="stack--tight"
+                style={{ margin: 0, paddingLeft: 18 }}
+              >
                 {run.constraints.map((constraint) => (
                   <li key={constraint}>{constraint}</li>
                 ))}

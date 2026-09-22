@@ -11,6 +11,15 @@ import {
   mergeEvents,
   runEvidenceLine,
 } from "./view-model.js";
+import {
+  applyPreferences,
+  broadcastPreferences,
+  readPreferences,
+  subscribePreferences,
+  subscribeSystemMotion,
+  writePreferences,
+  type DisplayPreferences,
+} from "./preferences.js";
 
 export interface AsyncResource<T> {
   data: T | null;
@@ -153,6 +162,60 @@ export function useRunEvents(options: {
 
   const clear = useCallback(() => setEvents([]), []);
   return { status, events, clear };
+}
+
+/**
+ * Device-local display preferences, applied to the document as soon as they are
+ * read and re-applied whenever they change.
+ *
+ * Every view that renders a preference-dependent surface (the raw log, the
+ * settings screen) uses this hook, so a change made on the settings screen
+ * takes effect in the views that are already mounted — the preferences are
+ * never inert controls.
+ */
+export function useDisplayPreferences(): {
+  preferences: DisplayPreferences;
+  update: (patch: Partial<DisplayPreferences>) => DisplayPreferences;
+  persisted: boolean;
+} {
+  const [preferences, setPreferences] = useState<DisplayPreferences>(() =>
+    readPreferences(),
+  );
+  const [persisted, setPersisted] = useState(true);
+
+  useEffect(() => {
+    applyPreferences(preferences);
+    // Follow the OS while the mode is `system`, and re-apply when it changes.
+    return subscribeSystemMotion(() => {
+      setPreferences((current) => {
+        applyPreferences(current);
+        return current;
+      });
+    });
+  }, [preferences]);
+
+  useEffect(
+    () =>
+      subscribePreferences((next) => {
+        setPreferences(next);
+        applyPreferences(next);
+      }),
+    [],
+  );
+
+  const update = useCallback(
+    (patch: Partial<DisplayPreferences>): DisplayPreferences => {
+      const result = writePreferences(patch);
+      setPersisted(result.persisted);
+      setPreferences(result.preferences);
+      applyPreferences(result.preferences);
+      broadcastPreferences(result.preferences);
+      return result.preferences;
+    },
+    [],
+  );
+
+  return { preferences, update, persisted };
 }
 
 /** Trailing-edge debounce for refresh bursts (SSE streams arrive in floods). */

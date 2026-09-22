@@ -29,15 +29,20 @@ import { buildStagePlan, builtinTemplate } from "../src/core/templates.js";
 import type { Bootstrap } from "../src/ui/api.js";
 import { App } from "../src/ui/App.js";
 import { ActivityPanel } from "../src/ui/components/ActivityPanel.js";
+import { AgentsView } from "../src/ui/components/AgentsView.js";
 import { ApprovalPanel } from "../src/ui/components/ApprovalPanel.js";
 import { ClampedText, TabPanel, Tabs } from "../src/ui/components/Bits.js";
 import { InputRequest } from "../src/ui/components/DecisionSheet.js";
 import { Home } from "../src/ui/components/Home.js";
 import { Nav } from "../src/ui/components/Nav.js";
+import { NewRunFlow } from "../src/ui/components/NewRunFlow.js";
 import { OverviewPanel } from "../src/ui/components/OverviewPanel.js";
+import { ProjectsView } from "../src/ui/components/ProjectsView.js";
 import { ReviewPanel } from "../src/ui/components/ReviewPanel.js";
 import { RunProgress } from "../src/ui/components/RunProgress.js";
 import { RunRow } from "../src/ui/components/RunRow.js";
+import { RunsView } from "../src/ui/components/RunsView.js";
+import { SettingsView } from "../src/ui/components/SettingsView.js";
 import { VerificationPanel } from "../src/ui/components/VerificationPanel.js";
 import type { RunDetailResponse } from "../src/ui/api.js";
 import {
@@ -2004,6 +2009,367 @@ check("the final acceptance gate offers Accept run", () => {
   );
   // Accepting takes no reason, so it never reveals the reason textarea.
   assert.ok(!/id="approval-reason"/.test(markup));
+});
+
+/* ------------------------------------------------------------------ */
+/* Pass 5: projects, agents, history, guided flow, settings             */
+/* ------------------------------------------------------------------ */
+
+check(
+  "the projects view leads with the project, not with its settings form",
+  () => {
+    const bootstrap = bootstrapFixture([
+      run(
+        "RUNNING",
+        "run-active",
+        "Refactor the rail",
+        "2026-09-22T12:00:00.000Z",
+      ),
+      run("COMPLETED", "run-done", "Earlier work", "2026-09-22T09:30:00.000Z"),
+    ]);
+    const markup = renderToStaticMarkup(
+      createElement(ProjectsView, {
+        client: {} as never,
+        bootstrap,
+        selectedId: project.id,
+        refreshBootstrap: () => undefined,
+      }),
+    );
+    // The project is the heading, and its immutable root is not under it.
+    assert.match(markup, /<h2>Fixture project<\/h2>/);
+    assert.ok(
+      !/value="\/tmp\/fixture-project"/.test(markup),
+      "the canonical root is never rendered as an editable field",
+    );
+    assert.ok(
+      markup.indexOf("/tmp/fixture-project") >
+        markup.indexOf("<summary>Project settings</summary>"),
+      "the canonical root stays out of the project's heading",
+    );
+    // The branch line only claims what is recorded; the working tree was not
+    // fetched in this render, so no clean/dirty word is invented.
+    assert.match(markup, /pill pill--info">main</);
+    assert.ok(!/working tree (clean|dirty)/.test(markup));
+    // What the project is doing now, from the run records.
+    assert.match(markup, /Running now/);
+    // Runs and changes lead; settings and technical facts are disclosures.
+    assert.match(markup, /<h2>Recent runs<\/h2>/);
+    assert.match(markup, /<h2>Changes<\/h2>/);
+    assert.match(markup, /<summary>Project settings<\/summary>/);
+    assert.match(markup, /<summary>Technical details<\/summary>/);
+    assert.ok(
+      markup.indexOf("Recent runs") < markup.indexOf("Project settings"),
+      "the settings form sits below the project's runs",
+    );
+    assert.ok(
+      markup.indexOf("Recent runs") < markup.indexOf("Canonical root"),
+      "storage-shaped facts stay in the technical disclosure",
+    );
+    // One project owns the whole page: no switcher, no half-width list column.
+    assert.ok(
+      !/Switch project/.test(markup),
+      "a single project needs no switcher",
+    );
+    assert.ok(!/grid--split/.test(markup), "the project owns the full width");
+    // With more than one project, switching is one compact selector.
+    const twoProjects = renderToStaticMarkup(
+      createElement(ProjectsView, {
+        client: {} as never,
+        bootstrap: {
+          ...bootstrapFixture([]),
+          projects: [
+            project,
+            {
+              ...project,
+              id: "project-2",
+              name: "Second project",
+              canonicalRoot: "/tmp/second-project",
+            },
+          ],
+        },
+        selectedId: project.id,
+        refreshBootstrap: () => undefined,
+      }),
+    );
+    assert.match(twoProjects, /Switch project/);
+    assert.match(twoProjects, /<h2>Fixture project<\/h2>/);
+    assert.match(
+      twoProjects,
+      /<option value="project-2">Second project<\/option>/,
+    );
+    assert.ok(!/grid--split/.test(twoProjects));
+    // A fresh project states that nothing has run rather than showing a blank.
+    const empty = renderToStaticMarkup(
+      createElement(ProjectsView, {
+        client: {} as never,
+        bootstrap: bootstrapFixture([]),
+        selectedId: project.id,
+        refreshBootstrap: () => undefined,
+      }),
+    );
+    assert.match(empty, /Nothing has run against this project yet/);
+    // `#/projects` with no selection still opens a project instead of an empty
+    // pane next to the only one that exists.
+    const autoSelected = renderToStaticMarkup(
+      createElement(ProjectsView, {
+        client: {} as never,
+        bootstrap: bootstrapFixture([]),
+        selectedId: null,
+        refreshBootstrap: () => undefined,
+      }),
+    );
+    assert.match(autoSelected, /<h2>Fixture project<\/h2>/);
+    assert.ok(!/No project selected/.test(autoSelected));
+  },
+);
+
+check("agent rows are configuration rows with an accessible edit name", () => {
+  const cli: AgentRecord = {
+    ...agent,
+    id: "agent-cli",
+    name: "DeepSeek V4.1 Flash",
+    roleHint: "implementer",
+    adapterKind: "hermes-opencode",
+    model: "deepseek-v4.1-flash",
+    effort: "high",
+    config: { executable: "hermes", provider: "opencode-go" },
+  };
+  const markup = renderToStaticMarkup(
+    createElement(AgentsView, {
+      client: {} as never,
+      bootstrap: {
+        ...bootstrapFixture([]),
+        agents: [agent, cli],
+      },
+      refreshBootstrap: () => undefined,
+    }),
+  );
+  // One clean row per agent: glyph, name, role, then the adapter metadata in
+  // plain words (the persisted ids stay in the technical rows).
+  const rosterMarkup = markup.slice(
+    markup.indexOf("agent-list"),
+    markup.indexOf("Configure an agent"),
+  );
+  assert.match(rosterMarkup, /class="agent-row__glyph" aria-hidden="true">F</);
+  assert.match(rosterMarkup, /class="agent-row__glyph" aria-hidden="true">D</);
+  assert.match(
+    rosterMarkup,
+    /Worker<\/span><span aria-hidden="true">·<\/span>/,
+  );
+  assert.match(rosterMarkup, /Mock · model not set/);
+  assert.match(rosterMarkup, /Hermes · deepseek-v4.1-flash · high effort/);
+  assert.ok(
+    !/hermes-opencode|implementer/.test(rosterMarkup),
+    "persisted adapter/role ids are not the row copy",
+  );
+  // The edit control is named for the agent it edits.
+  assert.match(markup, /aria-label="Edit Fixture agent">Edit</);
+  assert.match(markup, /aria-label="Edit DeepSeek V4.1 Flash">Edit</);
+  // Configured state is never painted as success: no green state mark, and
+  // the readiness word stays neutral for a configured/installed record.
+  assert.ok(
+    !/status--success/.test(markup),
+    "provider access is unchecked and must not read as a success",
+  );
+  assert.match(markup, /status--muted/);
+  assert.match(markup, /status__word">configured, enabled</);
+  // The page states its own name once (the top bar owns it), and the general
+  // security caveats live under one quiet disclosure that stays reachable.
+  assert.ok(
+    !/<h2>Agents<\/h2>/.test(markup),
+    "no second Agents heading in the view",
+  );
+  assert.match(markup, /<summary>How agents run<\/summary>/);
+  assert.ok(
+    markup.indexOf("How agents run") < markup.indexOf("OS privileges"),
+    "the security caveat is inside its disclosure",
+  );
+  // The editor is present with the full control set, and a mock agent has no
+  // adapter plumbing to fold (there is nothing to hide for a mock).
+  assert.match(markup, /<h2>Configure an agent<\/h2>/);
+  assert.match(markup, /id="_R_[^"]*-scenario"/);
+  assert.match(markup, /Manual handoff mode/);
+  assert.ok(
+    !/Advanced adapter configuration/.test(markup),
+    "a mock agent has no adapter plumbing to disclose",
+  );
+});
+
+check(
+  "history offers quick filters and never prints a raw query string",
+  () => {
+    const markup = renderToStaticMarkup(
+      createElement(RunsView, {
+        client: {} as never,
+        bootstrap: bootstrapFixture([]),
+      }),
+    );
+    // The five quick filters, as toggle chips, none of them pre-selected.
+    for (const label of [
+      "Needs me",
+      "Failed",
+      "Completed",
+      "Today",
+      "This week",
+    ]) {
+      assert.match(
+        markup,
+        new RegExp(`class="chip"[^>]*>${label}<`),
+        `${label} is a quick filter`,
+      );
+    }
+    assert.match(markup, /aria-label="Quick filters"/);
+    assert.ok(
+      !/aria-pressed="true"/.test(markup),
+      "no quick filter is active until the operator picks one",
+    );
+    // The advanced filters are still all present, one disclosure down.
+    assert.match(markup, /<summary>More filters<\/summary>/);
+    for (const label of [
+      "Goal contains",
+      "Project",
+      "Agent",
+      "Status",
+      "Branch",
+      "Review verdict",
+      "Created from",
+      "Created to",
+    ]) {
+      assert.match(markup, new RegExp(`<label[^>]*>${label}</label>`));
+    }
+    // The raw `GET /api/runs?…` echo is gone; the page describes its filters.
+    assert.ok(
+      !/GET \/api\/runs|\?q=|status=/.test(markup),
+      "no raw query string is rendered",
+    );
+    assert.match(markup, /No extra filters\./);
+    // No product-implementation prose on the surface.
+    assert.ok(!/server returned|sent to the server/i.test(markup));
+  },
+);
+
+check("the guided workflow starts at step one of five", () => {
+  const markup = renderToStaticMarkup(
+    createElement(NewRunFlow, {
+      client: {} as never,
+      bootstrap: bootstrapFixture([]),
+      initialProjectId: project.id,
+      refreshBootstrap: () => undefined,
+    }),
+  );
+  const labels = [
+    "Project &amp; goal",
+    "Team",
+    "Plan",
+    "Policy &amp; approvals",
+    "Review and start",
+  ];
+  for (const [index, label] of labels.entries()) {
+    assert.match(
+      markup,
+      new RegExp(`>${index + 1}</b>${label}`),
+      `step ${index + 1} is offered`,
+    );
+  }
+  assert.match(markup, /aria-label="Workflow steps"/);
+  // Step one is the project and the goal, and nothing later is reachable yet:
+  // no template, no role mapping, no acknowledgements, no create button.
+  assert.match(markup, /<h2>1 · Project &amp; goal<\/h2>/);
+  assert.match(markup, /id="newrun-goal"/);
+  assert.match(markup, /Add any limits the agents should follow/);
+  assert.ok(
+    !/id="newrun-template"/.test(markup),
+    "the plan step is not rendered yet",
+  );
+  assert.ok(
+    !/id="newrun-role-/.test(markup),
+    "the team step is not rendered yet",
+  );
+  assert.ok(
+    !/newrun-ack-/.test(markup),
+    "the acknowledgements cannot be ticked before their step",
+  );
+  assert.ok(
+    !/Create draft run/.test(markup),
+    "the draft cannot be created from step one",
+  );
+  // The project's storage-shaped facts are not on the default step.
+  assert.ok(
+    !/\/tmp\/fixture-project|vcs git|verification commands/.test(markup),
+    "the wizard's first step stays about the project and the goal",
+  );
+  assert.ok(!/constraint\(s\) recorded/.test(markup));
+  assert.match(markup, />Continue</);
+  assert.match(markup, />Back</);
+});
+
+check(
+  "settings are device-local, applied, and honest about the service",
+  () => {
+    const globals = globalThis as { window?: unknown };
+    const previous = globals.window;
+    globals.window = {
+      location: {
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: "4317",
+        origin: "http://127.0.0.1:4317",
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    };
+    try {
+      const markup = renderToStaticMarkup(
+        createElement(SettingsView, {
+          bootstrap: bootstrapFixture([]),
+          error: null,
+        }),
+      );
+      // Display preferences are real controls, and the OS is the default.
+      assert.match(markup, /name="agentops-motion"/);
+      assert.match(markup, /name="agentops-motion" checked="" value="system"/);
+      assert.match(markup, /name="agentops-density"/);
+      assert.match(markup, /Follow the operating system/);
+      // The raw-log display preferences exist and are not retention settings.
+      assert.match(markup, /id="settings-log-wrap"/);
+      assert.match(markup, /id="settings-log-timestamps"/);
+      assert.match(markup, /id="settings-log-follow"/);
+      assert.match(markup, /do not configure how long records are kept/);
+      // The service card reads this page's own location.
+      assert.match(markup, /http:\/\/127\.0\.0\.1:4317/);
+      assert.match(markup, /4317/);
+      assert.match(markup, /Connected/);
+      // No invented data directory, and no accounts/cloud/billing anywhere.
+      assert.match(markup, /Data directory: Not exposed by the local API/);
+      assert.ok(
+        !/\/Users\/giofiore\/\.agentops/.test(markup),
+        "no data directory is invented",
+      );
+      assert.match(markup, /Accounts and sign-in/);
+      assert.match(markup, /Cloud sync/);
+      assert.match(markup, /Billing/);
+    } finally {
+      globals.window = previous;
+    }
+  },
+);
+
+check("the shell carries the settings route in its navigation", () => {
+  const globals = globalThis as { window?: unknown };
+  const previous = globals.window;
+  globals.window = {
+    location: { hash: "#/settings" },
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  };
+  try {
+    const markup = renderToStaticMarkup(createElement(App));
+    assert.match(markup, /href="#\/settings" aria-current="page">Settings</);
+    // The sidebar stays navigation: no counts, no inventory of settings.
+    assert.ok(!/Preferences \(/.test(markup));
+  } finally {
+    globals.window = previous;
+  }
 });
 
 let failures = 0;

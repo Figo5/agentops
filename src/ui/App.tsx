@@ -31,6 +31,7 @@ import { NewRunFlow } from "./components/NewRunFlow.js";
 import { ProjectsView } from "./components/ProjectsView.js";
 import { RunsView } from "./components/RunsView.js";
 import { RunView } from "./components/RunView.js";
+import { SettingsView } from "./components/SettingsView.js";
 
 /** Fragment the skip link points at; never a route. */
 const SKIP_TARGET_HASH = "#main-content";
@@ -400,6 +401,9 @@ export function App() {
             streamVersion={streamVersion}
           />
         ) : null}
+        {route.view === "settings" ? (
+          <SettingsView bootstrap={data} error={bootstrap.error} />
+        ) : null}
       </main>
     </div>
   );
@@ -420,14 +424,16 @@ function titleFor(route: Route): string {
       return "Run";
     case "new-run":
       return "New workflow";
+    case "settings":
+      return "Settings";
     default:
       return "AgentOps";
   }
 }
 
 function subtitleFor(route: Route): string {
-  if (route.view === "runs")
-    return "persisted search across projects, agents, status, dates, branch and verdict";
+  if (route.view === "settings")
+    return "display preferences and the local service";
   /* A run's own screen shows its project, goal and state: never a raw id here. */
   if (route.view === "run") return "";
   return "";

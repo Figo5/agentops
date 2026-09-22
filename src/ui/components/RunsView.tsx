@@ -1,35 +1,47 @@
 /**
- * Run history: persisted search over project, goal, agent, status, dates, branch
- * and verdict. The server performs the filtering (`GET /api/runs`); the UI shows
- * the exact query it issued so the result set is auditable.
+ * Run history: the durable record of every run, filtered the way an operator
+ * actually looks for one.
+ *
+ * Two layers, and they are labelled as such:
+ *  - five quick filters (Needs me, Failed, Completed, Today, This week) that
+ *    narrow the rows the server just returned, and
+ *  - "More filters" — the full persisted search (goal, project, agent, status,
+ *    branch, verdict and a created-date range) that is sent to the server.
+ *
+ * Every filter the previous layout exposed is still here and still server-side.
+ * What is gone is the raw `GET /api/runs?…` echo: the same facts are stated in
+ * words. Run ids, templates and raw timestamps live in each row's collapsed
+ * technical disclosure instead of the main line.
  */
 import { useCallback, useMemo, useState } from "react";
 import type { AgentOpsClient, Bootstrap, RunSearchParams } from "../api.js";
-import type { RunListRecord } from "../ui-types.js";
 import { useResource } from "../hooks.js";
+import {
+  QUICK_FILTERS,
+  filterByQuickFilters,
+  historyRowView,
+  searchSummary,
+  type QuickFilterId,
+} from "../management.js";
 import {
   ALL_REVIEW_VERDICTS,
   ALL_RUN_STATUSES,
   EMPTY_RUN_SEARCH,
   buildRunSearchParams,
-  formatTimestamp,
-  relativeTime,
-  serializeQuery,
-  text,
-  verdictLabel,
-  verdictTone,
   type RunSearchForm,
 } from "../view-model.js";
 import {
   Button,
   Card,
+  Disclosure,
   EmptyState,
   ErrorBox,
   Field,
+  KeyValue,
   Loading,
   Pill,
   Select,
-  StatusPill,
+  StatusMark,
   TextInput,
 } from "./Bits.js";
 
@@ -42,13 +54,13 @@ export function RunsView({
 }) {
   const [form, setForm] = useState<RunSearchForm>(EMPTY_RUN_SEARCH);
   const [submitted, setSubmitted] = useState<RunSearchForm>(EMPTY_RUN_SEARCH);
+  const [quick, setQuick] = useState<QuickFilterId[]>([]);
   const [version, setVersion] = useState(0);
 
   const params: RunSearchParams = useMemo(
     () => buildRunSearchParams(submitted),
     [submitted],
   );
-  const query = serializeQuery(params);
 
   const results = useResource(() => client.runs(params), [version, submitted]);
 
@@ -75,26 +87,40 @@ export function RunsView({
   const reset = useCallback(() => {
     setForm(EMPTY_RUN_SEARCH);
     setSubmitted(EMPTY_RUN_SEARCH);
+    setQuick([]);
     setVersion((current) => current + 1);
   }, []);
 
-  const roleAgents = (mapping: Record<string, string>) =>
-    Object.entries(mapping).map(
-      ([role, agentId]) => `${role}: ${agentNames[agentId] ?? agentId}`,
+  const returned = results.data ?? [];
+  const rows = useMemo(
+    () =>
+      filterByQuickFilters(returned, quick).map((run) =>
+        historyRowView(run, { projectNames, agentNames }),
+      ),
+    [returned, quick, projectNames, agentNames],
+  );
+
+  const activeFilters = searchSummary(submitted, projectNames, agentNames);
+  const advancedCount = activeFilters.length;
+
+  const toggleQuick = (id: QuickFilterId) =>
+    setQuick((current) =>
+      current.includes(id)
+        ? current.filter((value) => value !== id)
+        : [...current, id],
     );
 
   return (
     <div className="view view--wide">
       <Card
-        title="Search persisted history"
-        hint="Every filter is sent to the server. Results are durable run records, never synthetic cards."
+        title="Filters"
         actions={
           <>
             <Button size="sm" onClick={submit}>
               Search
             </Button>
             <Button size="sm" variant="ghost" onClick={reset}>
-              Clear
+              Clear all
             </Button>
             <Button
               size="sm"
@@ -106,100 +132,144 @@ export function RunsView({
             </Button>
           </>
         }
+        hint="Start with a quick filter, or narrow the list by hand."
       >
-        <div className="grid grid--forms">
-          <Field label="Goal contains" htmlFor="search-q">
-            <TextInput
-              id="search-q"
-              value={form.q}
-              onChange={(value) => setForm({ ...form, q: value })}
-              placeholder="e.g. parser"
-            />
-          </Field>
-          <Field label="Project" htmlFor="search-project">
-            <Select
-              id="search-project"
-              value={form.projectId}
-              onChange={(value) => setForm({ ...form, projectId: value })}
-              placeholder="Any project"
-              options={bootstrap.projects.map((project) => ({
-                value: project.id,
-                label: project.name,
-              }))}
-            />
-          </Field>
-          <Field label="Agent" htmlFor="search-agent">
-            <Select
-              id="search-agent"
-              value={form.agentId}
-              onChange={(value) => setForm({ ...form, agentId: value })}
-              placeholder="Any agent"
-              options={bootstrap.agents.map((agent) => ({
-                value: agent.id,
-                label: agent.name,
-              }))}
-            />
-          </Field>
-          <Field label="Status" htmlFor="search-status">
-            <Select
-              id="search-status"
-              value={form.status}
-              onChange={(value) => setForm({ ...form, status: value })}
-              placeholder="Any status"
-              options={ALL_RUN_STATUSES.map((status) => ({
-                value: status,
-                label: status,
-              }))}
-            />
-          </Field>
-          <Field
-            label="Branch"
-            htmlFor="search-branch"
-            help="Matched against the latest recorded git checkpoint."
+        <div className="hist-filters">
+          <div className="hist-quick" role="group" aria-label="Quick filters">
+            {QUICK_FILTERS.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                className="chip"
+                title={filter.hint}
+                aria-pressed={quick.includes(filter.id)}
+                onClick={() => toggleQuick(filter.id)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          <Disclosure
+            summary={
+              advancedCount > 0
+                ? `More filters (${advancedCount} active)`
+                : "More filters"
+            }
           >
-            <TextInput
-              id="search-branch"
-              value={form.branch}
-              onChange={(value) => setForm({ ...form, branch: value })}
-              placeholder="feature/…"
-            />
-          </Field>
-          <Field label="Review verdict" htmlFor="search-verdict">
-            <Select
-              id="search-verdict"
-              value={form.verdict}
-              onChange={(value) => setForm({ ...form, verdict: value })}
-              placeholder="Any verdict"
-              options={ALL_REVIEW_VERDICTS.map((verdict) => ({
-                value: verdict,
-                label: verdict,
-              }))}
-            />
-          </Field>
-          <Field label="Created from" htmlFor="search-from">
-            <TextInput
-              id="search-from"
-              type="date"
-              value={form.from}
-              onChange={(value) => setForm({ ...form, from: value })}
-            />
-          </Field>
-          <Field
-            label="Created to"
-            htmlFor="search-to"
-            help="Inclusive; the whole day is included."
-          >
-            <TextInput
-              id="search-to"
-              type="date"
-              value={form.to}
-              onChange={(value) => setForm({ ...form, to: value })}
-            />
-          </Field>
+            <div className="stack">
+              <div className="grid grid--forms">
+                <Field label="Goal contains" htmlFor="search-q">
+                  <TextInput
+                    id="search-q"
+                    value={form.q}
+                    onChange={(value) => setForm({ ...form, q: value })}
+                    placeholder="e.g. parser"
+                  />
+                </Field>
+                <Field label="Project" htmlFor="search-project">
+                  <Select
+                    id="search-project"
+                    value={form.projectId}
+                    onChange={(value) => setForm({ ...form, projectId: value })}
+                    placeholder="Any project"
+                    options={bootstrap.projects.map((project) => ({
+                      value: project.id,
+                      label: project.name,
+                    }))}
+                  />
+                </Field>
+                <Field label="Agent" htmlFor="search-agent">
+                  <Select
+                    id="search-agent"
+                    value={form.agentId}
+                    onChange={(value) => setForm({ ...form, agentId: value })}
+                    placeholder="Any agent"
+                    options={bootstrap.agents.map((agent) => ({
+                      value: agent.id,
+                      label: agent.name,
+                    }))}
+                  />
+                </Field>
+                <Field label="Status" htmlFor="search-status">
+                  <Select
+                    id="search-status"
+                    value={form.status}
+                    onChange={(value) => setForm({ ...form, status: value })}
+                    placeholder="Any status"
+                    options={ALL_RUN_STATUSES.map((status) => ({
+                      value: status,
+                      label: status,
+                    }))}
+                  />
+                </Field>
+                <Field
+                  label="Branch"
+                  htmlFor="search-branch"
+                  help="Matched against the latest recorded git checkpoint."
+                >
+                  <TextInput
+                    id="search-branch"
+                    value={form.branch}
+                    onChange={(value) => setForm({ ...form, branch: value })}
+                    placeholder="feature/…"
+                  />
+                </Field>
+                <Field label="Review verdict" htmlFor="search-verdict">
+                  <Select
+                    id="search-verdict"
+                    value={form.verdict}
+                    onChange={(value) => setForm({ ...form, verdict: value })}
+                    placeholder="Any verdict"
+                    options={ALL_REVIEW_VERDICTS.map((verdict) => ({
+                      value: verdict,
+                      label: verdict,
+                    }))}
+                  />
+                </Field>
+                <Field label="Created from" htmlFor="search-from">
+                  <TextInput
+                    id="search-from"
+                    type="date"
+                    value={form.from}
+                    onChange={(value) => setForm({ ...form, from: value })}
+                  />
+                </Field>
+                <Field
+                  label="Created to"
+                  htmlFor="search-to"
+                  help="Inclusive; the whole day is included."
+                >
+                  <TextInput
+                    id="search-to"
+                    type="date"
+                    value={form.to}
+                    onChange={(value) => setForm({ ...form, to: value })}
+                  />
+                </Field>
+              </div>
+              <p className="faint small">
+                {advancedCount === 0
+                  ? "No extra filters."
+                  : `Filtering by ${activeFilters.join(" · ")}.`}
+              </p>
+            </div>
+          </Disclosure>
+
+          {/* The Results card already carries the count; this line only adds the
+              quick-filter narrowing when one is active. */}
+          {quick.length > 0 ? (
+            <p className="hist-count">
+              {`${rows.length} of ${returned.length} runs · ${quick
+                .map(
+                  (id) =>
+                    QUICK_FILTERS.find((filter) => filter.id === id)?.label ??
+                    id,
+                )
+                .join(" · ")}`}
+            </p>
+          ) : null}
         </div>
-        <p className="faint small mono wrap-anywhere" style={{ marginTop: 10 }}>
-          GET /api/runs{query || " (no filters)"}
-        </p>
       </Card>
 
       <ErrorBox error={results.error} onRetry={() => void results.reload()} />
@@ -208,13 +278,8 @@ export function RunsView({
         title={
           <>
             Results{" "}
-            <Pill
-              tone={
-                results.data && results.data.length > 0 ? "active" : "muted"
-              }
-              dot={false}
-            >
-              {results.data ? results.data.length : results.loading ? "…" : 0}
+            <Pill tone={rows.length > 0 ? "active" : "muted"} dot={false}>
+              {results.data ? rows.length : results.loading ? "…" : 0}
             </Pill>
           </>
         }
@@ -222,67 +287,58 @@ export function RunsView({
         {results.loading && !results.data ? (
           <Loading label="Querying runs…" />
         ) : null}
-        {results.data && results.data.length === 0 ? (
+        {results.data && rows.length === 0 ? (
           <EmptyState title="No runs match these filters">
             <p>Relax a filter, or start a new workflow from the navigation.</p>
           </EmptyState>
         ) : null}
-        {results.data && results.data.length > 0 ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th scope="col">Goal</th>
-                <th scope="col">Project</th>
-                <th scope="col">Agents</th>
-                <th scope="col">Status</th>
-                <th scope="col">Branch</th>
-                <th scope="col">Verdict</th>
-                <th scope="col">Created</th>
-                <th scope="col">Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.data.map((run) => {
-                const listRun = run as RunListRecord;
-                return (
-                  <tr key={run.id}>
-                    <td className="wrap-anywhere">
-                      <a href={`#/run/${run.id}`}>{run.goal}</a>
-                      <div className="faint small mono">{run.id}</div>
-                    </td>
-                    <td>{projectNames[run.projectId] ?? run.projectId}</td>
-                    <td className="small muted wrap-anywhere">
-                      {roleAgents(run.roleMapping).join(" · ") || "none"}
-                    </td>
-                    <td>
-                      <StatusPill status={run.status} />
-                    </td>
-                    <td className="mono">
-                      {text(listRun.branch, "not recorded")}
-                    </td>
-                    <td>
-                      {listRun.lastReviewVerdict ? (
-                        <Pill
-                          tone={verdictTone(listRun.lastReviewVerdict)}
-                          dot={false}
-                        >
-                          {verdictLabel(listRun.lastReviewVerdict)}
-                        </Pill>
-                      ) : (
-                        <span className="faint small">not recorded</span>
-                      )}
-                    </td>
-                    <td className="small muted" title={run.createdAt}>
-                      {formatTimestamp(run.createdAt)}
-                    </td>
-                    <td className="small muted" title={run.updatedAt}>
-                      {relativeTime(run.updatedAt)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        {results.data && rows.length > 0 ? (
+          <div className="list">
+            {rows.map((row) => (
+              <div className="list__row hist-row" key={row.id}>
+                <div className="list__goal">
+                  <b>
+                    <a href={`#/run/${row.id}`}>{row.goal}</a>
+                  </b>
+                  <span className="list__meta">
+                    <span>{row.project}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{row.when}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>updated {row.updated}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{row.duration}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="mono">{row.branch}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{row.agents}</span>
+                  </span>
+                  <Disclosure summary="Technical details">
+                    <KeyValue
+                      rows={row.technical.map(([key, value]) => [
+                        key,
+                        <span className="mono wrap-anywhere">{value}</span>,
+                      ])}
+                    />
+                  </Disclosure>
+                </div>
+                <div className="list__right">
+                  <span className="hist-row__outcome">
+                    <StatusMark status={row.status} label={row.outcomeWord} />
+                    {row.outcomeDetail ? (
+                      <span className="faint small">{row.outcomeDetail}</span>
+                    ) : null}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {results.data && results.data.length >= 200 ? (
+          <p className="faint small">
+            The local API returns at most 200 runs per query; narrow the filters
+            to see older records.
+          </p>
         ) : null}
       </Card>
     </div>

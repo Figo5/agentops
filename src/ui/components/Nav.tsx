@@ -131,6 +131,13 @@ export function Nav({
         >
           <span aria-hidden="true">+</span> New workflow
         </a>
+        <a
+          className="nav__item nav__item--settings"
+          href="#/settings"
+          aria-current={route.view === "settings" ? "page" : undefined}
+        >
+          Settings
+        </a>
       </div>
     </nav>
   );

@@ -33,7 +33,7 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
 
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.status, 0, `render harness failed:\n${output}`);
-  assert.match(output, /24\/24 render checks passed/);
+  assert.match(output, /30\/30 render checks passed/);
   assert.match(output, /ok - first-run empty state offers one useful action/);
   assert.match(
     output,
@@ -108,5 +108,27 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
   assert.match(
     output,
     /ok - the operator input gate asks the question next to the answer/,
+  );
+  // Pass 5 management surfaces.
+  assert.match(
+    output,
+    /ok - the projects view leads with the project, not with its settings form/,
+  );
+  assert.match(
+    output,
+    /ok - agent rows are configuration rows with an accessible edit name/,
+  );
+  assert.match(
+    output,
+    /ok - history offers quick filters and never prints a raw query string/,
+  );
+  assert.match(output, /ok - the guided workflow starts at step one of five/);
+  assert.match(
+    output,
+    /ok - settings are device-local, applied, and honest about the service/,
+  );
+  assert.match(
+    output,
+    /ok - the shell carries the settings route in its navigation/,
   );
 });

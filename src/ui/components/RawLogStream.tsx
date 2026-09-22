@@ -10,17 +10,15 @@
  * offers a jump back to the newest line.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  AgentRecord,
-  StageRecord,
-  TaskRecord,
-} from "../../core/types.js";
+import type { AgentRecord, StageRecord, TaskRecord } from "../../core/types.js";
 import {
   ALL_EVENT_CATEGORIES,
+  classNames,
   formatClock,
   formatTimestamp,
   statusLabel,
 } from "../view-model.js";
+import { useDisplayPreferences } from "../hooks.js";
 import {
   EVENT_SEVERITY_FILTERS,
   EVENT_SEVERITY_FILTER_LABELS,
@@ -81,10 +79,23 @@ export function RawLogStream({
   const [actor, setActor] = useState("");
   const [contains, setContains] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
-  const [follow, setFollow] = useState(true);
+  /**
+   * Device-local display preferences (Settings → Raw log display). They are
+   * applied to this component, not merely stored: wrap and the timestamp column
+   * change the rendering immediately, and the follow preference is this log's
+   * starting mode.
+   */
+  const { preferences } = useDisplayPreferences();
+  const [follow, setFollow] = useState(preferences.logFollow);
   /** Newest line id the operator has actually been shown at the bottom. */
   const seenIdRef = useRef<number>(lines.at(-1)?.id ?? 0);
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  // The follow preference is applied live, so changing it on the settings screen
+  // visibly affects a log that is already open.
+  useEffect(() => {
+    setFollow(preferences.logFollow);
+  }, [preferences.logFollow]);
 
   const newestId = lines.at(-1)?.id ?? 0;
   const actors = useMemo(
@@ -303,7 +314,11 @@ export function RawLogStream({
         </p>
       ) : (
         <div
-          className="terminal terminal--tall"
+          className={classNames(
+            "terminal",
+            "terminal--tall",
+            !preferences.logWrap && "terminal--nowrap",
+          )}
           role="log"
           aria-live="off"
           aria-relevant="additions"
@@ -312,10 +327,14 @@ export function RawLogStream({
           onScroll={onScroll}
         >
           {filtered.map((line) => (
-            <div key={line.id} className="terminal__line">
-              <span className="terminal__time" title={formatTimestamp(line.at)}>
-                {formatClock(line.at)}
-              </span>
+            <div
+              key={line.id}
+              className="terminal__line"
+              title={formatTimestamp(line.at)}
+            >
+              {preferences.logTimestamps ? (
+                <span className="terminal__time">{formatClock(line.at)}</span>
+              ) : null}
               <Pill tone={SEVERITY_TONES[line.severity]} dot={false}>
                 {line.severity === "attention"
                   ? "problem"

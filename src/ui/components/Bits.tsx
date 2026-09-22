@@ -76,6 +76,33 @@ export function StatusMark({
   );
 }
 
+/**
+ * Configured state, never liveness.
+ *
+ * Used where the underlying fact is "this is how the record is configured", not
+ * "this succeeded". A configured or installed agent renders the neutral `○`
+ * glyph and stays grey: only a *recorded problem* turns it into `!`, because
+ * nothing in the UI has verified that a provider will answer.
+ */
+export function ReadinessMark({
+  label,
+  tone,
+  title,
+}: {
+  label: string;
+  tone: Tone;
+  title?: string;
+}) {
+  return (
+    <span className={classNames("status", `status--${tone}`)} title={title}>
+      <span className="status__icon" aria-hidden="true">
+        {tone === "danger" ? "!" : "○"}
+      </span>
+      <span className="status__word">{label}</span>
+    </span>
+  );
+}
+
 export function StatusPill({
   status,
   title,
@@ -310,6 +337,7 @@ export function TextArea({
   placeholder,
   ariaLabel,
   invalid,
+  readOnly,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -318,6 +346,8 @@ export function TextArea({
   placeholder?: string;
   ariaLabel?: string;
   invalid?: boolean;
+  /** Truly read-only: the browser refuses edits, not just the handler. */
+  readOnly?: boolean;
 }) {
   return (
     <textarea
@@ -327,6 +357,7 @@ export function TextArea({
       placeholder={placeholder}
       aria-label={ariaLabel}
       aria-invalid={invalid ? "true" : undefined}
+      readOnly={readOnly}
       onChange={(event) => onChange(event.target.value)}
     />
   );

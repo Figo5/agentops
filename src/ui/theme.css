@@ -945,7 +945,8 @@ textarea::placeholder {
   color: var(--text-2);
 }
 
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="radio"] {
   width: auto;
   min-height: 0;
   padding: 0;
@@ -2633,7 +2634,8 @@ dt {
 
 /* Reduced motion: nothing moves. The spinner becomes a static ring. */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  /* An explicit "allow motion" on this device wins over the OS preference. */
+  :root:not([data-reduced-motion="full"]) * {
     transition: none !important;
     animation: none !important;
   }
@@ -2651,4 +2653,370 @@ dt {
   .skip-link {
     transition: none;
   }
+}
+
+/*
+ * Motion, part two: the device preference is applied to the document root, so
+ * "reduce" holds even on a machine whose OS asks for motion. The rule set is
+ * the same one the OS preference uses, so CSS and the imperative scroll in
+ * `revealRunTabs()` can never disagree about what "reduced motion" means.
+ */
+:root[data-reduced-motion="reduce"] * {
+  transition: none !important;
+  animation: none !important;
+}
+
+:root[data-reduced-motion="reduce"] .spinner {
+  animation: none;
+  border-color: var(--hairline-2);
+  border-top-color: var(--text-2);
+}
+
+/* --------------------------- 14. density ------------------------------- */
+
+/*
+ * Density is a device-local display preference (Settings → Display). Compact
+ * tightens rows, lists and section padding; it never hides information.
+ */
+:root[data-density="compact"] .view {
+  gap: 18px;
+  padding: 20px var(--gutter) 48px;
+}
+
+:root[data-density="compact"] .card {
+  padding-top: 12px;
+}
+
+:root[data-density="compact"] .list__row,
+:root[data-density="compact"] .agent-row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+:root[data-density="compact"] .run-row {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+:root[data-density="compact"] .table th,
+:root[data-density="compact"] .table td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* --------------------------- 15. settings ------------------------------ */
+
+.settings-view {
+  max-width: 820px;
+}
+
+.settings-intro {
+  margin-bottom: -6px;
+}
+
+.settings-group {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.settings-fieldset > legend {
+  padding: 0 0 8px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 550;
+}
+
+.settings-choices {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.settings-choice:hover {
+  border-color: var(--hairline-2);
+  background: var(--hover);
+}
+
+/*
+ * The global `input { width: 100% }` rule sizes form fields for typing; a radio
+ * is not a field. It is pinned to its real box here so a choice row never
+ * stretches and pushes its own text off-screen.
+ */
+.settings-choice input[type="radio"] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 0;
+  margin: 3px 0 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.settings-choice > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.settings-choice > span > .field__help {
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------ 16. agents and projects ---------------------- */
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline);
+  min-width: 0;
+}
+
+.agent-row:first-child {
+  border-top: none;
+}
+
+.agent-row__glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 50%;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+
+.agent-row__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.agent-row__name {
+  font-size: var(--fs-body);
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-row__meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.agent-row__right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-head__path {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Switching projects is one compact control, not a column. It appears only when
+ * there is another project to switch to, so a single-project page is entirely
+ * that project's state, runs and diff.
+ */
+.project-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.project-switch select {
+  width: auto;
+  min-width: 220px;
+  max-width: 100%;
+}
+
+.project-head__state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------ 17. run history ----------------------------- */
+
+.hist-filters {
+  display: grid;
+  gap: 12px;
+}
+
+.hist-quick {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hist-count {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.hist-row__outcome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* History rows read as rows at every width: the goal wraps instead of being
+   clipped, and the metadata line carries the rest. */
+.hist-row .list__goal {
+  display: grid;
+  gap: 6px;
+}
+
+.hist-row .list__goal b {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.hist-row__columns {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+/* ------------------------ 18. guided workflow ------------------------- */
+
+.wizard__steps {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wizard__step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.wizard__step[data-state="current"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.wizard__step[data-state="done"] {
+  border-color: var(--hairline-2);
+  color: var(--text);
+}
+
+.wizard__step b {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--hover);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.wizard__nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wizard__ack {
+  display: grid;
+  gap: 12px;
+}
+
+.wizard__ack .checkline {
+  align-items: flex-start;
+}
+
+/*
+ * The plan in plain words: stage names in execution order, no keys, kinds or
+ * roles. The exact frozen plan lives in the technical disclosure.
+ */
+.plan-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--text);
+  font-size: var(--fs-body);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Policy requirements as sentences, not as a table of booleans. */
+.policy-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.policy-list b {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.terminal--nowrap {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+.terminal--nowrap .terminal__line {
+  white-space: pre;
 }

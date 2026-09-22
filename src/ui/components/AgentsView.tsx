@@ -1,18 +1,31 @@
 /**
- * Agents view: configure real CLI adapters or deterministic mock agents.
+ * Agents: the roster and the editor.
  *
  * Honesty rules enforced here:
- *  - The UI shows *configured* state only. It never claims an agent is online,
- *    authenticated or reachable, because configuration cannot prove that.
+ *  - The roster shows *configured* state only. An installed CLI reads "CLI
+ *    installed · access unchecked" and is painted neutral, never green: nothing
+ *    on this screen has verified that a provider will answer.
  *  - Presets pre-fill the form; the model ID stays editable and the caveat is
  *    rendered next to the preset.
  *  - Manual handoff mode is explicit, and the Hermes one-shot switch is a
  *    separate opt-in with a warning that it bypasses the CLI's own approvals.
+ *  - Adapter plumbing (executable, argument array, provider, raw config) lives
+ *    behind one collapsed disclosure; the id and record timestamps are
+ *    read-only, because they are not editable.
+ *
+ * Every control the previous layout exposed is still present: presets, name,
+ * role hint, adapter kind, model, effort, mock scenario, executable, arguments,
+ * provider, one-shot opt-in, enabled, manual handoff, save and revert.
  */
 import { useEffect, useId, useState } from "react";
 import type { AgentRecord } from "../../core/types.js";
 import type { AgentOpsClient, Bootstrap } from "../api.js";
 import { useAction } from "../hooks.js";
+import {
+  adapterDisplayName,
+  agentRowView,
+  agentTechnicalRows,
+} from "../management.js";
 import {
   ADAPTER_KINDS,
   ADAPTER_LABELS,
@@ -20,8 +33,6 @@ import {
   AGENT_PRESETS,
   EMPTY_AGENT_FORM,
   MOCK_SCENARIO_VALUES,
-  agentStateLabel,
-  agentStateTone,
   agentToForm,
   formatTimestamp,
   isManualAgent,
@@ -33,12 +44,14 @@ import {
   Button,
   Card,
   Checkbox,
+  Disclosure,
   EmptyState,
   ErrorBox,
   Field,
   KeyValue,
   Notice,
   Pill,
+  ReadinessMark,
   Select,
   TextArea,
   TextInput,
@@ -203,54 +216,6 @@ export function AgentEditor({
               />
             </Field>
           ) : null}
-          {form.adapterKind !== "mock" ? (
-            <>
-              <Field
-                label="Executable"
-                htmlFor={`${idPrefix}-exe`}
-                error={errors["executable"]}
-                help="Launched by path lookup on your PATH. No shell interpolation."
-              >
-                <TextInput
-                  id={`${idPrefix}-exe`}
-                  value={form.executable}
-                  onChange={(value) => setForm({ ...form, executable: value })}
-                  placeholder={
-                    form.adapterKind === "codex"
-                      ? "codex"
-                      : form.adapterKind === "claude-code"
-                        ? "claude"
-                        : "hermes"
-                  }
-                />
-              </Field>
-              <Field
-                label="Arguments (JSON array)"
-                htmlFor={`${idPrefix}-args`}
-                error={errors["args"]}
-                help='e.g. ["--print"]'
-              >
-                <TextInput
-                  id={`${idPrefix}-args`}
-                  value={form.argsJson}
-                  onChange={(value) => setForm({ ...form, argsJson: value })}
-                />
-              </Field>
-            </>
-          ) : null}
-          {form.adapterKind === "hermes-opencode" ? (
-            <Field
-              label="Provider"
-              htmlFor={`${idPrefix}-provider`}
-              help="Recorded in config, e.g. opencode-go."
-            >
-              <TextInput
-                id={`${idPrefix}-provider`}
-                value={form.provider}
-                onChange={(value) => setForm({ ...form, provider: value })}
-              />
-            </Field>
-          ) : null}
         </div>
 
         <Checkbox
@@ -269,34 +234,128 @@ export function AgentEditor({
           help="No process is launched. The run enters an honest waiting state and a human performs the step outside AgentOps."
         />
 
-        {form.adapterKind === "hermes-opencode" ? (
-          <Checkbox
-            id={`${idPrefix}-oneshot`}
-            checked={form.allowHermesOneshot}
-            onChange={(checked) =>
-              setForm({ ...form, allowHermesOneshot: checked })
-            }
-            label={
-              <span>
-                Allow Hermes one-shot mode{" "}
-                <span className="mono">(allowHermesOneshot)</span>
-              </span>
-            }
-            help="One-shot mode makes the CLI auto-bypass its own approval prompts. AgentOps then cannot see or block those decisions. Enable this deliberately."
-          />
+        {/*
+          Adapter plumbing is real configuration but it is not what an operator
+          is usually here for, so it stays folded. Nothing is removed: the same
+          fields, validation and warnings are inside.
+        */}
+        {form.adapterKind !== "mock" ? (
+          <Disclosure summary="Advanced adapter configuration">
+            <div className="stack">
+              <div className="grid grid--forms">
+                <Field
+                  label="Executable"
+                  htmlFor={`${idPrefix}-exe`}
+                  error={errors["executable"]}
+                  help="Launched by path lookup on your PATH. No shell interpolation."
+                >
+                  <TextInput
+                    id={`${idPrefix}-exe`}
+                    value={form.executable}
+                    onChange={(value) =>
+                      setForm({ ...form, executable: value })
+                    }
+                    placeholder={
+                      form.adapterKind === "codex"
+                        ? "codex"
+                        : form.adapterKind === "claude-code"
+                          ? "claude"
+                          : "hermes"
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Arguments (JSON array)"
+                  htmlFor={`${idPrefix}-args`}
+                  error={errors["args"]}
+                  help='e.g. ["--print"]'
+                >
+                  <TextInput
+                    id={`${idPrefix}-args`}
+                    value={form.argsJson}
+                    onChange={(value) => setForm({ ...form, argsJson: value })}
+                  />
+                </Field>
+                {form.adapterKind === "hermes-opencode" ? (
+                  <Field
+                    label="Provider"
+                    htmlFor={`${idPrefix}-provider`}
+                    help="Recorded in config, e.g. opencode-go."
+                  >
+                    <TextInput
+                      id={`${idPrefix}-provider`}
+                      value={form.provider}
+                      onChange={(value) =>
+                        setForm({ ...form, provider: value })
+                      }
+                    />
+                  </Field>
+                ) : null}
+              </div>
+
+              {form.adapterKind === "hermes-opencode" ? (
+                <Checkbox
+                  id={`${idPrefix}-oneshot`}
+                  checked={form.allowHermesOneshot}
+                  onChange={(checked) =>
+                    setForm({ ...form, allowHermesOneshot: checked })
+                  }
+                  label={
+                    <span>
+                      Allow Hermes one-shot mode{" "}
+                      <span className="mono">(allowHermesOneshot)</span>
+                    </span>
+                  }
+                  help="One-shot mode makes the CLI auto-bypass its own approval prompts. AgentOps then cannot see or block those decisions. Enable this deliberately."
+                />
+              ) : null}
+
+              {form.manual ? (
+                <Notice tone="warn">
+                  Manual handoff is selected: the executable and argument fields
+                  above are ignored while this stays enabled.
+                </Notice>
+              ) : null}
+              {form.allowHermesOneshot ? (
+                <Notice tone="warn">
+                  One-shot enabled. This is recorded in the agent config and is
+                  visible on the agent record.
+                </Notice>
+              ) : null}
+            </div>
+          </Disclosure>
         ) : null}
 
-        {form.manual && form.adapterKind !== "mock" ? (
-          <Notice tone="warn">
-            Manual handoff is selected: the executable and argument fields above
-            are ignored while this stays enabled.
-          </Notice>
-        ) : null}
-        {form.allowHermesOneshot ? (
-          <Notice tone="warn">
-            One-shot enabled. This is recorded in the agent config and is
-            visible on the agent record.
-          </Notice>
+        {editing ? (
+          <Disclosure summary="Technical details">
+            <div className="stack">
+              <KeyValue
+                rows={[
+                  [
+                    "Agent ID",
+                    <span className="mono wrap-anywhere">{editing.id}</span>,
+                  ],
+                  [
+                    "Updated",
+                    <span className="mono">
+                      {formatTimestamp(editing.updatedAt)}
+                    </span>,
+                  ],
+                ]}
+              />
+              <h3>Raw configuration · {editing.name}</h3>
+              <TextArea
+                value={JSON.stringify(editing.config, null, 2)}
+                onChange={() => undefined}
+                ariaLabel="Agent configuration (read-only)"
+                readOnly
+              />
+              <p className="faint small">
+                Read-only. Credentials are never stored in this record and never
+                rendered here.
+              </p>
+            </div>
+          </Disclosure>
         ) : null}
 
         {action.error ? <ErrorBox error={action.error} /> : null}
@@ -344,10 +403,7 @@ export function AgentsView({
 
   return (
     <div className="view view--wide">
-      <Card
-        title="Agent roster"
-        hint="Configured state, not liveness. AgentOps cannot verify that a CLI exists, is authenticated or answers until a task actually runs."
-      >
+      <Card hint="Configured records. Whether a provider answers is only proven when a task actually runs.">
         {agents.length === 0 ? (
           <EmptyState title="No agents configured">
             <p>
@@ -357,79 +413,70 @@ export function AgentsView({
             </p>
           </EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th scope="col">Name</th>
-                <th scope="col">Role hint</th>
-                <th scope="col">Adapter</th>
-                <th scope="col">Model</th>
-                <th scope="col">Effort</th>
-                <th scope="col">State</th>
-                <th scope="col">Updated</th>
-                <th scope="col">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map((agent) => (
-                <tr key={agent.id}>
-                  <td>
-                    <b>{agent.name}</b>
-                    {isManualAgent(agent) ? (
-                      <>
-                        {" "}
-                        <Pill tone="warn" dot={false}>
-                          manual
-                        </Pill>
-                      </>
-                    ) : null}
-                  </td>
-                  <td className="muted">{agent.roleHint ?? "—"}</td>
-                  <td className="mono">{agent.adapterKind}</td>
-                  <td className="mono wrap-anywhere">
-                    {agent.model ?? "UNKNOWN"}
-                  </td>
-                  <td className="mono">{agent.effort ?? "—"}</td>
-                  <td>
-                    <Pill tone={agentStateTone(agent)}>
-                      {agentStateLabel(agent)}
-                    </Pill>
-                  </td>
-                  <td className="muted small">
-                    {formatTimestamp(agent.updatedAt)}
-                  </td>
-                  <td>
+          <div className="agent-list">
+            {agents.map((agent) => {
+              const row = agentRowView(agent);
+              return (
+                <div className="agent-row" key={agent.id}>
+                  <span className="agent-row__glyph" aria-hidden="true">
+                    {row.initial}
+                  </span>
+                  <div className="agent-row__text">
+                    <span className="agent-row__name">
+                      {row.name}
+                      {isManualAgent(agent) ? (
+                        <>
+                          {" "}
+                          <Pill tone="warn" dot={false}>
+                            manual
+                          </Pill>
+                        </>
+                      ) : null}
+                    </span>
+                    <span className="agent-row__meta">
+                      <span>{row.role}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{row.secondary}</span>
+                    </span>
+                  </div>
+                  <div className="agent-row__right">
+                    <ReadinessMark
+                      label={row.readiness}
+                      tone={row.readinessTone}
+                      title={`${adapterDisplayName(agent.adapterKind)} · configured state, access not verified`}
+                    />
                     <Button
                       size="sm"
                       variant="ghost"
+                      ariaLabel={row.editLabel}
                       onClick={() => setSelectedId(agent.id)}
                     >
                       {selectedId === agent.id ? "Editing" : "Edit"}
                     </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
-        <div className="stack" style={{ marginTop: 14 }}>
-          <Notice tone="info">
-            Configured agents run with your OS privileges. AgentOps records what
-            it launches and what came back; it does not sandbox third-party
-            CLIs.
-          </Notice>
-          {agents.some(
-            (agent) => agent.config["allowHermesOneshot"] === true,
-          ) ? (
-            <Notice tone="warn">
-              At least one agent has Hermes one-shot mode enabled. Those runs
-              bypass the CLI's own approval prompts — the AgentOps approval gate
-              still applies.
+        <Disclosure className="card disclosure--card" summary="How agents run">
+          <div className="stack">
+            <Notice tone="info">
+              Configured agents run with your OS privileges. AgentOps records
+              what it launches and what came back; it does not sandbox
+              third-party CLIs.
             </Notice>
-          ) : null}
-        </div>
+            {agents.some(
+              (agent) => agent.config["allowHermesOneshot"] === true,
+            ) ? (
+              <Notice tone="warn">
+                At least one agent has Hermes one-shot mode enabled. Those runs
+                bypass the CLI's own approval prompts — the AgentOps approval
+                gate still applies.
+              </Notice>
+            ) : null}
+          </div>
+        </Disclosure>
       </Card>
 
       <div className="grid grid--split">
@@ -467,18 +514,14 @@ export function AgentsView({
             ]}
           />
           {selected ? (
-            <div className="stack" style={{ marginTop: 12 }}>
-              <h3>Raw configuration · {selected.name}</h3>
-              <TextArea
-                value={JSON.stringify(selected.config, null, 2)}
-                onChange={() => undefined}
-                ariaLabel="Agent configuration (read-only)"
+            <Disclosure summary={`Technical details · ${selected.name}`}>
+              <KeyValue
+                rows={agentTechnicalRows(selected).map(([key, value]) => [
+                  key,
+                  <span className="mono wrap-anywhere">{value}</span>,
+                ])}
               />
-              <p className="faint small">
-                Credentials are never stored in this record and never rendered
-                here.
-              </p>
-            </div>
+            </Disclosure>
           ) : null}
         </Card>
       </div>

@@ -1,12 +1,33 @@
 /**
- * Projects view: registration (with the absolute-path helper), per-project
- * verification commands, the detected snapshot and the real diff, plus PATCH
- * editing of the mutable fields.
+ * Projects: one project at a time, read the way an operator reads it.
+ *
+ * The page leads with the project itself — its name, its branch and
+ * working-tree state (only when those were recorded or actually fetched) and
+ * what it is doing now: the active or latest run's outcome. Recent runs and the
+ * working-tree changes follow. Project settings and every storage-shaped fact
+ * (canonical root, id, timestamps, command arrays) are secondary: a disclosure
+ * apiece, never the first thing on the screen.
+ *
+ * Capabilities preserved from the previous layout: registration with the
+ * absolute-path helper and duplicate detection, per-project verification
+ * commands (add / remove / validate), allowed adapters, notes, the fetched
+ * repository snapshot, the staged/working-tree diff, PATCH editing of the
+ * mutable fields, the project's run list and the per-run "New workflow" entry.
  */
 import { useEffect, useId, useMemo, useState } from "react";
-import type { ProjectRecord } from "../../core/types.js";
-import type { AgentOpsClient, Bootstrap } from "../api.js";
+import type { ProjectRecord, RunRecord } from "../../core/types.js";
+import type {
+  AgentOpsClient,
+  Bootstrap,
+  ProjectSnapshotResponse,
+} from "../api.js";
 import { useAction, useResource } from "../hooks.js";
+import {
+  projectBranchState,
+  projectRunSummary,
+  projectTechnicalRows,
+  runOutcomeLabel,
+} from "../management.js";
 import {
   ADAPTER_KINDS,
   ADAPTER_LABELS,
@@ -20,8 +41,6 @@ import {
   projectAllowedAdapters,
   projectNotes,
   projectPathHint,
-  relativeTime,
-  text,
   validateProjectForm,
   type ProjectForm,
 } from "../view-model.js";
@@ -29,10 +48,8 @@ import {
   Button,
   Card,
   Checkbox,
-  CodeBlock,
   DiffView,
   Disclosure,
-  EmptyState,
   ErrorBox,
   Field,
   KeyValue,
@@ -40,14 +57,13 @@ import {
   Notice,
   Pill,
   Select,
-  StatusPill,
-  TabPanel,
-  Tabs,
+  StatusMark,
   TextArea,
   TextInput,
 } from "./Bits.js";
 
-const PROJECT_TABS_ID = "project-sections";
+/** The resource shape the project header shares with the changes panel. */
+type SnapshotResource = ReturnType<typeof useResource<ProjectSnapshotResponse>>;
 
 function formFromProject(project: ProjectRecord): ProjectForm {
   return {
@@ -181,6 +197,13 @@ function VerificationCommandEditor({
   );
 }
 
+/**
+ * Registration and editing.
+ *
+ * The path is an input only while a project is being registered: once the
+ * server has canonicalised it, the root is immutable, so the edit form shows it
+ * as read-only text instead of offering a field that cannot be saved.
+ */
 export function ProjectEditor({
   client,
   onCreated,
@@ -237,10 +260,12 @@ export function ProjectEditor({
 
   return (
     <Card
-      title={editing ? `Edit ${editing.name}` : "Register a project"}
+      title={
+        editing ? `Project settings · ${editing.name}` : "Register a project"
+      }
       hint={
         editing
-          ? "PATCH updates the name, verification commands, notes and allowed adapters. The canonical root and VCS kind are immutable."
+          ? "Saving updates the name, verification commands, notes and allowed adapters. The canonical root and VCS kind cannot be changed."
           : "The server canonicalises the path, detects the repository and rejects an invalid root. Nothing is written outside the database."
       }
     >
@@ -257,20 +282,31 @@ export function ProjectEditor({
               onChange={(value) => setForm({ ...form, name: value })}
             />
           </Field>
-          <Field
-            label="Absolute repository path"
-            htmlFor={`${idPrefix}-path`}
-            error={errors["path"]}
-            help={hint ?? "Absolute path to the repository root."}
-          >
-            <TextInput
-              id={`${idPrefix}-path`}
-              value={form.path}
-              onChange={(value) => setForm({ ...form, path: value })}
-              placeholder="/Users/you/code/project"
-              invalid={Boolean(errors["path"]) || Boolean(duplicate)}
-            />
-          </Field>
+          {editing ? (
+            <Field
+              label="Repository root (cannot be changed)"
+              help="Immutable: the server canonicalised this path when the project was registered."
+            >
+              <p className="mono wrap-anywhere project-head__path">
+                {editing.canonicalRoot}
+              </p>
+            </Field>
+          ) : (
+            <Field
+              label="Repository path"
+              htmlFor={`${idPrefix}-path`}
+              error={errors["path"]}
+              help={hint ?? "The absolute path to the repository root."}
+            >
+              <TextInput
+                id={`${idPrefix}-path`}
+                value={form.path}
+                onChange={(value) => setForm({ ...form, path: value })}
+                placeholder="/Users/you/code/project"
+                invalid={Boolean(errors["path"]) || Boolean(duplicate)}
+              />
+            </Field>
+          )}
           <Field
             label="Version control"
             htmlFor={`${idPrefix}-vcs`}
@@ -282,6 +318,7 @@ export function ProjectEditor({
               onChange={(value) =>
                 setForm({ ...form, vcs: value === "none" ? "none" : "git" })
               }
+              disabled={Boolean(editing)}
               options={[
                 { value: "git", label: "git" },
                 { value: "none", label: "none" },
@@ -332,18 +369,26 @@ export function ProjectEditor({
                       : form.allowedAdapters.filter((value) => value !== kind),
                   })
                 }
-                label={<span className="mono">{kind}</span>}
+                label={<span className="mono">{ADAPTER_LABELS[kind]}</span>}
                 help={ADAPTER_NOTES[kind]}
               />
             ))}
           </div>
         </fieldset>
 
-        <VerificationCommandEditor
-          form={form}
-          setForm={setForm}
-          errors={errors}
-        />
+        <Disclosure
+          summary={
+            form.verificationCommands.length > 0
+              ? `Verification commands (${form.verificationCommands.length})`
+              : "Verification commands (none yet)"
+          }
+        >
+          <VerificationCommandEditor
+            form={form}
+            setForm={setForm}
+            errors={errors}
+          />
+        </Disclosure>
 
         {action.error ? <ErrorBox error={action.error} /> : null}
         {action.notice ? <Notice tone="success">{action.notice}</Notice> : null}
@@ -371,17 +416,17 @@ export function ProjectEditor({
   );
 }
 
-function SnapshotPanel({
+/** The fetched repository state: cleanliness and the real diff. */
+function ChangesPanel({
   client,
   project,
+  snapshot,
 }: {
   client: AgentOpsClient;
   project: ProjectRecord;
+  /** The snapshot the project header already fetched, reused instead of re-requesting. */
+  snapshot: SnapshotResource;
 }) {
-  const snapshot = useResource(
-    project.vcs === "git" ? () => client.projectSnapshot(project.id) : null,
-    [project.id, project.vcs],
-  );
   const [staged, setStaged] = useState(false);
   const diff = useResource(
     project.vcs === "git" ? () => client.projectDiff(project.id, staged) : null,
@@ -390,11 +435,10 @@ function SnapshotPanel({
 
   if (project.vcs !== "git") {
     return (
-      <Card title="Repository snapshot">
+      <Card title="Changes">
         <Notice tone="warn">
-          This project is registered with{" "}
-          <span className="mono">vcs: none</span>, so AgentOps records no git
-          checkpoints, diffs or branch policy for it.
+          This project is registered without version control, so AgentOps
+          records no git checkpoints, diffs or branch policy for it.
         </Notice>
       </Card>
     );
@@ -403,14 +447,14 @@ function SnapshotPanel({
   const data = snapshot.data;
   return (
     <Card
-      title="Repository snapshot"
+      title="Changes"
       actions={
         <Button
           size="sm"
           onClick={() => void snapshot.reload()}
           disabled={snapshot.loading}
         >
-          {snapshot.loading ? "Refreshing…" : "Refresh snapshot"}
+          {snapshot.loading ? "Refreshing…" : "Refresh"}
         </Button>
       }
       hint="Read from the working tree on request. Nothing is cleaned, reset or stashed."
@@ -424,46 +468,15 @@ function SnapshotPanel({
           <Loading label="Reading repository state…" />
         ) : null}
         {data ? (
-          <KeyValue
-            rows={[
-              ["Branch", <span className="mono">{text(data.branch)}</span>],
-              [
-                "HEAD",
-                <span className="mono">
-                  {data.head ? data.head.slice(0, 12) : "UNKNOWN"}
-                </span>,
-              ],
-              [
-                "Working tree",
-                <Pill tone={data.dirty ? "warn" : "success"}>
-                  {data.dirty ? "dirty" : "clean"}
-                </Pill>,
-              ],
-              ["Changed files", data.changed ? data.changed.length : "UNKNOWN"],
-              [
-                "Untracked files",
-                data.untracked ? data.untracked.length : "UNKNOWN",
-              ],
-              [
-                "Insertions",
-                data.insertions === null || data.insertions === undefined
-                  ? "UNKNOWN"
-                  : data.insertions,
-              ],
-              [
-                "Deletions",
-                data.deletions === null || data.deletions === undefined
-                  ? "UNKNOWN"
-                  : data.deletions,
-              ],
-            ]}
-          />
-        ) : null}
-        {data?.changed && data.changed.length > 0 ? (
-          <CodeBlock label="changed paths" text={data.changed.join("\n")} />
-        ) : null}
-        {data?.untracked && data.untracked.length > 0 ? (
-          <CodeBlock label="untracked paths" text={data.untracked.join("\n")} />
+          <div className="project-head__state">
+            <Pill tone={data.dirty ? "warn" : "success"}>
+              {data.dirty ? "working tree dirty" : "working tree clean"}
+            </Pill>
+            <span className="faint small">
+              {data.changed ? data.changed.length : "UNKNOWN"} changed ·{" "}
+              {data.untracked ? data.untracked.length : "UNKNOWN"} untracked
+            </span>
+          </div>
         ) : null}
 
         <div className="row">
@@ -496,6 +509,168 @@ function SnapshotPanel({
   );
 }
 
+function ProjectDetail({
+  client,
+  project,
+  runs,
+  refreshBootstrap,
+  projects,
+}: {
+  client: AgentOpsClient;
+  project: ProjectRecord;
+  runs: readonly RunRecord[];
+  refreshBootstrap: () => void | Promise<void>;
+  projects: readonly ProjectRecord[];
+}) {
+  const snapshot = useResource(
+    project.vcs === "git" ? () => client.projectSnapshot(project.id) : null,
+    [project.id, project.vcs],
+  );
+  const branch = projectBranchState(project, snapshot.data ?? null);
+  const summary = useMemo(() => projectRunSummary(runs), [runs]);
+  const idPrefix = useId();
+
+  return (
+    <div className="stack project-detail">
+      <header className="page-head">
+        <div className="page-head__title">
+          <h2>{project.name}</h2>
+          {project.archived ? <Pill tone="muted">archived</Pill> : null}
+          <Pill tone="info" dot={false}>
+            {branch.label}
+          </Pill>
+        </div>
+        <p className="page-head__meta">{summary.outcome}</p>
+        <div className="page-head__actions">
+          <Button
+            size="sm"
+            onClick={() => (window.location.hash = `#/new-run/${project.id}`)}
+          >
+            New workflow
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => (window.location.hash = "#/runs")}
+          >
+            All run history
+          </Button>
+        </div>
+      </header>
+
+      {/*
+        Switching, not an inventory: a compact selector, shown only when there
+        is another project to switch to. The project itself owns the width.
+      */}
+      {projects.length > 1 ? (
+        <div className="project-switch">
+          <label htmlFor={`${idPrefix}-switch`}>Switch project</label>
+          <Select
+            id={`${idPrefix}-switch`}
+            value={project.id}
+            onChange={(value) => {
+              if (value && value !== project.id)
+                window.location.hash = `#/projects/${value}`;
+            }}
+            options={projects.map((candidate) => ({
+              value: candidate.id,
+              label: candidate.name,
+            }))}
+          />
+        </div>
+      ) : null}
+
+      <Card
+        title="Recent runs"
+        hint={
+          runs.length > 0
+            ? undefined
+            : "Nothing has run against this project yet."
+        }
+        actions={
+          runs.length > 0 ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => (window.location.hash = "#/runs")}
+            >
+              See all {runs.length}
+            </Button>
+          ) : undefined
+        }
+      >
+        {runs.length > 0 ? (
+          <div className="list">
+            {runs.slice(0, 6).map((run) => (
+              <a className="list__row" key={run.id} href={`#/run/${run.id}`}>
+                <div className="list__goal">
+                  <b title={run.goal}>{run.goal}</b>
+                  <span className="list__meta">
+                    <span>{runOutcomeLabel(run)}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{formatTimestamp(run.createdAt)}</span>
+                  </span>
+                </div>
+                <div className="list__right">
+                  <StatusMark status={run.status} />
+                </div>
+              </a>
+            ))}
+          </div>
+        ) : null}
+      </Card>
+
+      <ChangesPanel client={client} project={project} snapshot={snapshot} />
+
+      <Disclosure className="card disclosure--card" summary="Project settings">
+        <ProjectEditor
+          client={client}
+          projects={projects}
+          refreshBootstrap={refreshBootstrap}
+          editing={project}
+        />
+      </Disclosure>
+
+      <Disclosure className="card disclosure--card" summary="Technical details">
+        <div className="stack">
+          <KeyValue
+            rows={projectTechnicalRows(project, snapshot.data ?? null).map(
+              ([key, value]) => [
+                key,
+                <span className="mono wrap-anywhere">{value}</span>,
+              ],
+            )}
+          />
+          <KeyValue
+            rows={[
+              [
+                "Allowed adapters",
+                projectAllowedAdapters(project).join(", ") || "none recorded",
+              ],
+              ["Notes", projectNotes(project) ?? "none"],
+              [
+                "Verification commands",
+                project.verificationCommands.length === 0
+                  ? "none configured — verification records an unavailable outcome"
+                  : project.verificationCommands
+                      .map(
+                        (command) => `${command.name}: ${commandLine(command)}`,
+                      )
+                      .join(" · "),
+              ],
+            ]}
+          />
+          <p className="faint small">
+            Workflow git policy governs AgentOps-issued git operations. It is
+            not a sandbox around the agents you configure: those processes
+            inherit your OS privileges.
+          </p>
+        </div>
+      </Disclosure>
+    </div>
+  );
+}
+
 export function ProjectsView({
   client,
   bootstrap,
@@ -508,19 +683,23 @@ export function ProjectsView({
   refreshBootstrap: () => void | Promise<void>;
 }) {
   const projects = bootstrap.projects;
-  const selected = useMemo(
-    () => projects.find((project) => project.id === selectedId) ?? null,
-    [projects, selectedId],
-  );
-  const [tab, setTab] = useState("overview");
-  const runs = useMemo(
-    () => bootstrap.runs.filter((run) => run.projectId === selected?.id),
-    [bootstrap.runs, selected?.id],
-  );
-
-  useEffect(() => {
-    setTab("overview");
-  }, [selectedId]);
+  /**
+   * The selected project, or the one an operator would open first: the project
+   * they asked for, otherwise the most recently updated one. `#/projects` never
+   * shows an empty pane next to a single project.
+   */
+  const selected = useMemo(() => {
+    const explicit = projects.find((project) => project.id === selectedId);
+    if (explicit) return explicit;
+    return (
+      [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ??
+      null
+    );
+  }, [projects, selectedId]);
+  const runsFor = (projectId: string) =>
+    [...bootstrap.runs]
+      .filter((run) => run.projectId === projectId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   if (projects.length === 0) {
     return (
@@ -537,287 +716,38 @@ export function ProjectsView({
     );
   }
 
+  const runs = selected ? runsFor(selected.id) : [];
+
+  /*
+   * One project owns the full width: its outcome, its runs and its diff are
+   * what an operator came for. Switching lives in a compact selector on the
+   * project itself (above), and registration stays one disclosure away.
+   */
   return (
-    <div className="view view--wide grid" style={{ gap: 18 }}>
-      <div className="grid grid--split">
-        <Card
-          title="Registered projects"
-          hint="Select a project to inspect or edit it."
-        >
-          <div className="list">
-            {projects.map((project) => (
-              <a
-                key={project.id}
-                className="list__row"
-                href={`#/projects/${project.id}`}
-                aria-current={project.id === selectedId ? "true" : undefined}
-              >
-                <div className="list__goal">
-                  <b>{project.name}</b>
-                  <span className="list__meta">
-                    <span className="mono wrap-anywhere">
-                      {project.canonicalRoot}
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span className="mono">{project.vcs}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>
-                      {project.verificationCommands.length} verification
-                      commands
-                    </span>
-                  </span>
-                </div>
-                <div className="list__right">
-                  {project.archived ? <Pill tone="muted">archived</Pill> : null}
-                  <Pill tone="info" dot={false}>
-                    {project.defaultBranch
-                      ? `default ${project.defaultBranch}`
-                      : "branch UNKNOWN"}
-                  </Pill>
-                </div>
-              </a>
-            ))}
-          </div>
-        </Card>
-
-        {selected ? (
-          <Card
-            title={
-              <>
-                {selected.name}{" "}
-                {selected.archived ? <Pill tone="muted">archived</Pill> : null}
-              </>
-            }
-            actions={
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => (window.location.hash = "#/runs")}
-              >
-                View runs
-              </Button>
-            }
-          >
-            <Tabs
-              idBase={PROJECT_TABS_ID}
-              label="Project sections"
-              active={tab}
-              onChange={setTab}
-              tabs={[
-                { id: "overview", label: "Overview" },
-                {
-                  id: "verification",
-                  label: "Verification",
-                  count: selected.verificationCommands.length,
-                },
-                { id: "runs", label: "Runs", count: runs.length },
-                { id: "edit", label: "Edit" },
-              ]}
-            />
-            <TabPanel
-              idBase={PROJECT_TABS_ID}
-              id="overview"
-              selected={tab === "overview"}
-            >
-              <div className="stack">
-                <KeyValue
-                  rows={[
-                    ["Id", <span className="mono">{selected.id}</span>],
-                    [
-                      "Canonical root",
-                      <span className="mono wrap-anywhere">
-                        {selected.canonicalRoot}
-                      </span>,
-                    ],
-                    ["VCS", <span className="mono">{selected.vcs}</span>],
-                    [
-                      "Default branch",
-                      <span className="mono">
-                        {text(selected.defaultBranch)}
-                      </span>,
-                    ],
-                    [
-                      "Allowed adapters",
-                      projectAllowedAdapters(selected).join(", ") ||
-                        "none recorded",
-                    ],
-                    ["Notes", projectNotes(selected) ?? "none"],
-                    ["Created", formatTimestamp(selected.createdAt)],
-                    [
-                      "Updated",
-                      `${formatTimestamp(selected.updatedAt)} (${relativeTime(selected.updatedAt)})`,
-                    ],
-                  ]}
-                />
-                <Notice tone="info">
-                  Workflow git policy governs AgentOps-issued git operations. It
-                  is not a sandbox around the agents you configure: those
-                  processes inherit your OS privileges.
-                </Notice>
-              </div>
-            </TabPanel>
-            <TabPanel
-              idBase={PROJECT_TABS_ID}
-              id="verification"
-              selected={tab === "verification"}
-            >
-              <div className="stack">
-                {selected.verificationCommands.length === 0 ? (
-                  <Notice tone="warn">
-                    No verification commands are configured. The verification
-                    stage will record an unavailable outcome rather than a pass.
-                  </Notice>
-                ) : (
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Kind</th>
-                        <th scope="col">Executable</th>
-                        <th scope="col">Arguments</th>
-                        <th scope="col">Invocation</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selected.verificationCommands.map((command) => (
-                        <tr key={`${command.name}-${command.executable}`}>
-                          <td>
-                            <Pill tone="info" dot={false}>
-                              {command.name}
-                            </Pill>
-                          </td>
-                          <td className="mono">{command.executable}</td>
-                          <td className="mono wrap-anywhere">
-                            {JSON.stringify(command.args)}
-                          </td>
-                          <td className="mono wrap-anywhere">
-                            {commandLine(command)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                <p className="faint small">
-                  Commands are configured per project. Runs snapshot this list
-                  when they are created, so later edits do not change an
-                  existing run's policy.
-                </p>
-              </div>
-            </TabPanel>
-            <TabPanel
-              idBase={PROJECT_TABS_ID}
-              id="runs"
-              selected={tab === "runs"}
-            >
-              <div className="stack">
-                {runs.length === 0 ? (
-                  <p className="faint small">
-                    No runs recorded for this project.
-                  </p>
-                ) : (
-                  <div className="list">
-                    {runs.map((run) => (
-                      <div
-                        className="list__row"
-                        key={run.id}
-                        style={{ cursor: "default" }}
-                      >
-                        <div className="list__goal">
-                          <b>
-                            <a href={`#/run/${run.id}`}>{run.goal}</a>
-                          </b>
-                          <span className="list__meta">
-                            <span>{run.templateId}</span>
-                            <span aria-hidden="true">·</span>
-                            <span>updated {relativeTime(run.updatedAt)}</span>
-                          </span>
-                        </div>
-                        <div className="list__right">
-                          <StatusPill status={run.status} />
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            onClick={() =>
-                              (window.location.hash = `#/new-run/${run.projectId}`)
-                            }
-                          >
-                            New workflow
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </TabPanel>
-            <TabPanel
-              idBase={PROJECT_TABS_ID}
-              id="edit"
-              selected={tab === "edit"}
-            >
-              <ProjectEditor
-                client={client}
-                projects={projects}
-                refreshBootstrap={refreshBootstrap}
-                editing={selected}
-              />
-            </TabPanel>
-          </Card>
-        ) : (
-          <EmptyState title="No project selected">
-            <p>
-              Pick a project on the left, or register a new repository root.
-            </p>
-          </EmptyState>
-        )}
-      </div>
-
-      {selected ? <SnapshotPanel client={client} project={selected} /> : null}
+    <div className="view view--wide">
       {selected ? (
-        <Card
-          title={`Recent runs for ${selected.name}`}
-          hint="Runs are unique executions; this list is persisted history, not a mock."
-        >
-          {runs.length === 0 ? (
-            <p className="faint small">
-              Nothing has run against this project yet.
-            </p>
-          ) : (
-            <div className="list">
-              {runs.slice(0, 8).map((run) => (
-                <a className="list__row" key={run.id} href={`#/run/${run.id}`}>
-                  <div className="list__goal">
-                    <b>{run.goal}</b>
-                    <span className="list__meta">
-                      <span>{run.status}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{formatTimestamp(run.createdAt)}</span>
-                    </span>
-                  </div>
-                  <div className="list__right">
-                    <Pill tone="muted">{run.plan.stages.length} stages</Pill>
-                  </div>
-                </a>
-              ))}
-            </div>
-          )}
-        </Card>
+        <ProjectDetail
+          client={client}
+          project={selected}
+          runs={runs}
+          refreshBootstrap={refreshBootstrap}
+          projects={projects}
+        />
       ) : null}
-      {projects.length > 0 ? (
-        <Disclosure
-          className="card disclosure--card"
-          summary="Register another project"
-        >
-          <ProjectEditor
-            client={client}
-            projects={projects}
-            refreshBootstrap={refreshBootstrap}
-            onCreated={(project) => {
-              window.location.hash = `#/projects/${project.id}`;
-            }}
-          />
-        </Disclosure>
-      ) : null}
+
+      <Disclosure
+        className="card disclosure--card"
+        summary="Register another project"
+      >
+        <ProjectEditor
+          client={client}
+          projects={projects}
+          refreshBootstrap={refreshBootstrap}
+          onCreated={(project) => {
+            window.location.hash = `#/projects/${project.id}`;
+          }}
+        />
+      </Disclosure>
     </div>
   );
 }
