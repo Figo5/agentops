@@ -33,6 +33,7 @@ import { ApprovalPanel } from "../src/ui/components/ApprovalPanel.js";
 import { ClampedText, TabPanel, Tabs } from "../src/ui/components/Bits.js";
 import { InputRequest } from "../src/ui/components/DecisionSheet.js";
 import { Home } from "../src/ui/components/Home.js";
+import { Nav } from "../src/ui/components/Nav.js";
 import { OverviewPanel } from "../src/ui/components/OverviewPanel.js";
 import { ReviewPanel } from "../src/ui/components/ReviewPanel.js";
 import { RunProgress } from "../src/ui/components/RunProgress.js";
@@ -209,6 +210,13 @@ check("first-run empty state offers one useful action", () => {
     ),
     "the first-run page is one concise action, not an inventory",
   );
+  // The claim is about where the record lives, not about what an agent does:
+  // real adapters contact their model provider.
+  assert.match(markup, /Run history stays on this machine/);
+  assert.ok(
+    !/Everything an agent does/.test(markup),
+    "no claim that an agent's work never leaves the machine",
+  );
   assert.match(markup, /Nothing needs you right now/);
 });
 
@@ -237,11 +245,23 @@ check(
         now: new Date("2026-09-22T14:00:00.000Z"),
       }) as never,
     );
-    // Time-appropriate greeting (14:00 local) and an honest attention count.
+    // Time-appropriate greeting and the attention sentence: the unit is named,
+    // never a bare count, and the project count is not repeated here.
     assert.match(markup, /class="page-title"/);
     assert.match(markup, /Good (morning|afternoon|evening)|Still up/);
-    assert.match(markup, /2 need you · 1 running/);
-    assert.match(markup, /1 project/);
+    assert.match(markup, /2 runs need your attention · 1 running/);
+    assert.ok(
+      !/need you</.test(markup),
+      "the attention sentence names the unit",
+    );
+    assert.ok(
+      !/Mission control/.test(markup),
+      "the dashboard states no second page title",
+    );
+    assert.ok(
+      !/project ·|1 project/.test(markup.replace(/home-foot[\s\S]*$/, "")),
+      "the project count lives in the footer only",
+    );
     // Three calm sections, each with its rows.
     assert.match(markup, /Needs you/);
     assert.match(markup, /Running/);
@@ -250,19 +270,42 @@ check(
     assert.match(markup, /Refactor the rail/);
     assert.match(markup, /Broken fixture/);
     assert.match(markup, /Earlier work/);
-    // Primary project name plus one semantic status and a clear action link.
-    assert.match(markup, /Fixture project/);
+    // Primary project name, secondary goal, one semantic status, one action.
+    assert.match(markup, /class="run-row__project">Fixture project</);
+    assert.match(
+      markup,
+      /class="run-row__goal" title="Ship the review loop">Ship the review loop/,
+    );
+    assert.ok(
+      markup.indexOf('class="run-row__project"') <
+        markup.indexOf('class="run-row__goal"'),
+      "the project is the row's primary line and the goal is secondary",
+    );
     assert.match(markup, /title="Waiting for you \(WAITING_APPROVAL\)"/);
+    // The running row names the stage and the agent the plan maps to it, from
+    // the run's own record — no extra request, no invented progress.
     assert.match(
       markup,
-      /class="run-row__link" href="#\/run\/run-waiting">Review/,
+      /class="run-row__detail">Implementation · Fixture agent</,
+    );
+    assert.ok(
+      !/run-row__evidence/.test(markup),
+      "no evidence line without an evidence state",
     );
     assert.match(
       markup,
-      /class="run-row__link" href="#\/run\/run-failed">Retry/,
+      /class="run-row__link" href="#\/run\/run-waiting" aria-label="Review Fixture project">Review/,
     );
-    assert.match(markup, /class="run-row__link" href="#\/run\/run-done">View/);
-    // No inventory and no template/stage identifiers in the rows.
+    assert.match(
+      markup,
+      /class="run-row__link" href="#\/run\/run-failed" aria-label="Retry Fixture project">Retry/,
+    );
+    assert.match(
+      markup,
+      /class="run-row__link" href="#\/run\/run-done" aria-label="View Fixture project">View/,
+    );
+    // No inventory, no template/stage identifiers, and no implementation-policy
+    // prose under the section headings — the headings and rows suffice.
     assert.ok(
       !/Workspace|Templates on this server|plan stages|agents \(/.test(markup),
       "the operational home is not an inventory",
@@ -271,6 +314,13 @@ check(
       !/implement-review|v1 ·|8 stages|plan stages/.test(markup),
       "no template or stage identifiers on the home rows",
     );
+    assert.ok(
+      !/Gates and failures|One active workflow per repository|Terminal runs are read-only/.test(
+        markup,
+      ),
+      "no implementation-policy hints under the section headings",
+    );
+    assert.ok(!/home-section__hint/.test(markup));
     // The wait is stated once per row (the status word), never repeated as a
     // second badge, banner or meta chip; the title keeps the raw enum.
     assert.equal(
@@ -282,10 +332,21 @@ check(
       !/WAITING FOR YOU/.test(markup),
       "no shouted uppercase status anywhere on the home",
     );
-    // Projects count sits at the bottom as a link.
+    // Below the sections: one small projects link, and nothing else to count.
     assert.match(markup, /class="home-foot"/);
-    assert.match(markup, /href="#\/projects">1 project/);
-    assert.match(markup, /href="#\/runs">Run history/);
+    assert.match(
+      markup,
+      /class="home-foot__projects" href="#\/projects">1 project</,
+    );
+    assert.equal(
+      (markup.match(/class="home-foot__projects"/g) ?? []).length,
+      1,
+      "one projects link, not a footer inventory",
+    );
+    assert.ok(
+      !/Run history<\/a>|same-origin|template\(s\)/.test(markup),
+      "no duplicated history link or footer inventory",
+    );
   },
 );
 
@@ -299,6 +360,174 @@ check("empty categories are not rendered as placeholder sections", () => {
   assert.ok(!/class="home-section__head"><h2>Running/.test(markup));
   assert.match(markup, /Nothing needs you right now/);
 });
+
+check(
+  "needs-you rows carry one persisted evidence line, or say why not",
+  () => {
+    const bootstrap = bootstrapFixture([
+      run(
+        "WAITING_APPROVAL",
+        "run-waiting",
+        "Ship the review loop",
+        "2026-09-22T12:00:00.000Z",
+      ),
+      run("FAILED", "run-failed", "Broken fixture", "2026-09-22T10:30:00.000Z"),
+      run("COMPLETED", "run-done", "Earlier work", "2026-09-22T09:30:00.000Z"),
+    ]);
+    const markup = renderToStaticMarkup(
+      Home({
+        bootstrap,
+        evidence: {
+          "run-waiting": {
+            status: "ready",
+            line: "Claude Opus 4.8 rejected · 7 tests passed",
+            state: "Ready for final approval",
+          },
+          "run-failed": { status: "unavailable", line: null },
+        },
+      }) as never,
+    );
+    assert.match(markup, /class="run-row__evidence"/);
+    assert.match(markup, /Claude Opus 4\.8 rejected · 7 tests passed/);
+    // The state word comes from the persisted gate, not a generic wait.
+    assert.match(markup, /class="status__word">Ready for final approval</);
+    assert.match(
+      markup,
+      /title="Ready for final approval \(WAITING_APPROVAL\)"/,
+    );
+    assert.ok(
+      !/Waiting for you/.test(markup),
+      "a known gate never falls back to the generic waiting word",
+    );
+    // A failed lookup says so rather than implying a clean run…
+    assert.match(markup, /Evidence unavailable/);
+    // …and the finished row carries no evidence line at all.
+    const done = markup.slice(markup.indexOf("run-done"));
+    assert.ok(!/run-row__evidence/.test(done));
+
+    // Nothing recorded: no evidence line, and never a fabricated one.
+    const bare = renderToStaticMarkup(
+      Home({
+        bootstrap,
+        evidence: { "run-waiting": { status: "ready", line: null } },
+      }) as never,
+    );
+    assert.ok(!/run-row__evidence/.test(bare));
+    // With no gate read, the row keeps the run's own status word.
+    assert.match(bare, /class="status__word">Waiting for you</);
+    // Loading is stated while the bounded detail request is in flight, and the
+    // word stays the run's own status until the gate is actually known.
+    const loading = renderToStaticMarkup(
+      Home({
+        bootstrap,
+        evidence: { "run-waiting": { status: "loading", line: null } },
+      }) as never,
+    );
+    assert.match(loading, /Loading evidence…/);
+    assert.match(loading, /class="status__word">Waiting for you</);
+  },
+);
+
+check(
+  "the sidebar navigates and names blocked projects, with no inventory",
+  () => {
+    const blocked = bootstrapFixture([
+      run(
+        "WAITING_APPROVAL",
+        "run-waiting",
+        "Ship the review loop",
+        "2026-09-22T12:00:00.000Z",
+      ),
+      run(
+        "WAITING_INPUT",
+        "run-input",
+        "Answer the plan",
+        "2026-09-22T11:30:00.000Z",
+      ),
+      run("FAILED", "run-failed", "Broken fixture", "2026-09-22T11:00:00.000Z"),
+      run(
+        "INTERRUPTED",
+        "run-interrupted",
+        "Stopped run",
+        "2026-09-22T10:30:00.000Z",
+      ),
+      run(
+        "RUNNING",
+        "run-active",
+        "Refactor the rail",
+        "2026-09-22T10:00:00.000Z",
+      ),
+      run("COMPLETED", "run-done", "Earlier work", "2026-09-22T09:30:00.000Z"),
+    ]);
+    const markup = renderToStaticMarkup(
+      Nav({ bootstrap: blocked, route: { view: "home" } as never }) as never,
+    );
+    // Wordmark and the four destinations.
+    assert.match(markup, /AGENT<span>OPS<\/span>/);
+    assert.match(markup, /href="#\/" aria-current="page">Today</);
+    assert.match(markup, /href="#\/projects">Projects</);
+    assert.match(markup, /href="#\/agents">Agents</);
+    assert.match(markup, /href="#\/runs">History</);
+    // One hairline separates navigation from what needs the operator.
+    assert.match(markup, /nav__section nav__section--ruled/);
+    assert.match(markup, /class="nav__label">Needs you</);
+    // Blocked runs are named by project, capped, with the goal as the title.
+    assert.match(markup, /title="Fixture project — Ship the review loop"/);
+    assert.equal(
+      (markup.match(/class="nav__item nav__item--needs"/g) ?? []).length,
+      3,
+      "at most a few blocked runs are named",
+    );
+    assert.match(markup, /href="#\/">1 more on Today</);
+    // Starting work sits at the bottom; no counters or inventories anywhere.
+    assert.match(markup, /class="nav__item nav__item--new" href="#\/new-run"/);
+    assert.match(markup, />\+<\/span> New workflow</);
+    assert.ok(
+      !/nav__count|nav__project|Open runs|event stream|v0\.1/.test(markup),
+      "the sidebar shows no counters, no project list and no run inventory",
+    );
+
+    // A quiet workspace says so in one line, and claims no counts at all.
+    const quiet = renderToStaticMarkup(
+      Nav({
+        bootstrap: emptyBootstrap,
+        route: { view: "agents" } as never,
+      }) as never,
+    );
+    assert.match(quiet, /class="nav__empty">Nothing needs you</);
+    assert.match(quiet, /href="#\/agents" aria-current="page">Agents</);
+    assert.ok(!/nav__item--needs|nav__more/.test(quiet));
+  },
+);
+
+check(
+  "the shell renders no footer inventory and no duplicate home title",
+  () => {
+    const globals = globalThis as { window?: unknown };
+    const previous = globals.window;
+    globals.window = {
+      location: { hash: "#/" },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    };
+    try {
+      const markup = renderToStaticMarkup(createElement(App));
+      // The old footer printed project/agent/template/run counts plus a
+      // same-origin note above every screen: navigation and rows say enough.
+      assert.ok(
+        !/agent\(s\)|template\(s\)|run\(s\)|same-origin client|project\(s\)/.test(
+          markup,
+        ),
+        "no footer inventory line in the shell",
+      );
+      // The dashboard's only page title is the greeting in the view itself.
+      assert.ok(!/Mission control/.test(markup));
+      assert.match(markup, /href="#\/" aria-current="page">Today</);
+    } finally {
+      globals.window = previous;
+    }
+  },
+);
 
 check(
   "a run row renders the persisted record and omits absent derived fields",
@@ -315,8 +544,17 @@ check(
     assert.match(bare, /Broken fixture/);
     assert.match(bare, /#\/run\/run-failed/);
     assert.match(bare, /Failed/);
-    assert.match(bare, /Fixture project/);
-    assert.match(bare, /class="run-row__link" href="#\/run\/run-failed">Retry/);
+    assert.match(bare, /class="run-row__project">Fixture project</);
+    assert.match(
+      bare,
+      /class="run-row__link" href="#\/run\/run-failed" aria-label="Retry Fixture project">Retry/,
+    );
+    // The link's accessible name says what it does and to which project.
+    assert.match(bare, /aria-label="Retry Fixture project"/);
+    assert.ok(
+      !/Loading evidence|Evidence unavailable/.test(bare),
+      "a row with no evidence state claims nothing",
+    );
     assert.ok(
       !/feature\//.test(bare),
       "no branch chip when the server sends no branch",
@@ -338,6 +576,80 @@ check(
     assert.ok(!/Reject/.test(withDerived) || !/REJECT/.test(withDerived));
   },
 );
+
+check("a row states its evidence, its loading state or its failure", () => {
+  const record = run(
+    "WAITING_APPROVAL",
+    "run-waiting",
+    "Ship the review loop",
+    "2026-09-22T12:00:00.000Z",
+  );
+  // Evidence is never replaced by progress, and progress never invents evidence.
+  const both = renderToStaticMarkup(
+    RunRow({
+      run: record,
+      projectName: "Fixture project",
+      detail: "Implementation · Fixture agent",
+      evidence: {
+        status: "ready",
+        line: "Claude approved",
+        state: "Ready for final approval",
+      },
+    }) as never,
+  );
+  assert.match(both, /class="run-row__evidence">Claude approved</);
+  assert.ok(
+    !/run-row__detail/.test(both),
+    "a row shows one note, not two competing lines",
+  );
+  const detailOnly = renderToStaticMarkup(
+    RunRow({
+      run: { ...record, status: "RUNNING" },
+      projectName: "Fixture project",
+      detail: "Implementation · Fixture agent",
+    }) as never,
+  );
+  assert.match(
+    detailOnly,
+    /class="run-row__detail">Implementation · Fixture agent</,
+  );
+  const withEvidence = renderToStaticMarkup(
+    RunRow({
+      run: record,
+      projectName: "Fixture project",
+      evidence: {
+        status: "ready",
+        line: "Claude Opus 4.8 rejected · 7 tests passed",
+        state: "Changes requested",
+      },
+    }) as never,
+  );
+  assert.match(
+    withEvidence,
+    /class="run-row__evidence">Claude Opus 4\.8 rejected · 7 tests passed</,
+  );
+  assert.match(withEvidence, /class="status__word">Changes requested</);
+  assert.ok(
+    !/Waiting for you/.test(withEvidence),
+    "the row states the persisted decision, not a generic wait",
+  );
+  const loading = renderToStaticMarkup(
+    RunRow({
+      run: record,
+      projectName: "Fixture project",
+      evidence: { status: "loading", line: null },
+    }) as never,
+  );
+  assert.match(loading, /class="run-row__evidence">Loading evidence…</);
+  const unavailable = renderToStaticMarkup(
+    RunRow({
+      run: record,
+      projectName: "Fixture project",
+      evidence: { status: "unavailable", line: null },
+    }) as never,
+  );
+  assert.match(unavailable, /class="run-row__evidence">Evidence unavailable</);
+});
 
 /* --------------------- run screen fixtures (pass 3) -------------------- */
 
@@ -798,10 +1110,7 @@ check("stage progress is compact and its chronology is folded", () => {
     !/progress__meta|attempts</.test(bar),
     "the progression itself carries no attempt counts or record rows",
   );
-  assert.ok(
-    !/<details/.test(bar),
-    "no milestone is expanded by default",
-  );
+  assert.ok(!/<details/.test(bar), "no milestone is expanded by default");
   assert.ok(
     !/>[^<]*WAITING_APPROVAL[^<]*</.test(markup),
     "no persisted enum is rendered as visible text",
@@ -850,10 +1159,7 @@ check("the run state headline is the semantic sentence, not the enum", () => {
     }).headline,
     "Implementation failed",
   );
-  assert.equal(
-    runStateView({ status: "COMPLETED" }).headline,
-    "Completed",
-  );
+  assert.equal(runStateView({ status: "COMPLETED" }).headline, "Completed");
 });
 
 check("activity lists lifecycle sentences, not output frames", () => {
@@ -886,7 +1192,10 @@ check("activity lists lifecycle sentences, not output frames", () => {
     markup.indexOf('aria-label="Run activity"'),
     markup.indexOf("</ol>"),
   );
-  assert.ok(!/raw protocol frame/.test(list), "output frames stay out of Activity");
+  assert.ok(
+    !/raw protocol frame/.test(list),
+    "output frames stay out of Activity",
+  );
   assert.ok(!/agent\.output/.test(list), "no event type column in Activity");
   assert.match(markup, /Problems only/);
   // The raw log stream keeps every frame, with its own filters and follow.
@@ -900,7 +1209,9 @@ check("activity lists lifecycle sentences, not output frames", () => {
 });
 
 check("verification leads with command rows and folds the raw output", () => {
-  const markup = renderToStaticMarkup(createElement(VerificationPanel, { detail }));
+  const markup = renderToStaticMarkup(
+    createElement(VerificationPanel, { detail }),
+  );
   const latestAt = markup.indexOf("Latest verification");
   assert.ok(latestAt === -1, "no record-inspector heading");
   assert.match(markup, /Final verification/);
@@ -957,7 +1268,16 @@ check("a passed command with unparsed counts still reads as passed", () => {
     ...detail,
     tests: detail.tests.map((test) =>
       test.attemptId === "attempt-final"
-        ? { ...test, passed: null, failed: null, skipped: null, total: null, parsedConfidently: false, status: "unknown" as const, summary: "command output could not be counted" }
+        ? {
+            ...test,
+            passed: null,
+            failed: null,
+            skipped: null,
+            total: null,
+            parsedConfidently: false,
+            status: "unknown" as const,
+            summary: "command output could not be counted",
+          }
         : test,
     ),
   };
@@ -969,55 +1289,75 @@ check("a passed command with unparsed counts still reads as passed", () => {
   assert.match(markup, /Passed/);
   // …while the count it could not parse is stated as unavailable, never as 0.
   assert.match(markup, /Test count unavailable/);
-  assert.ok(!/0 passed/.test(markup), "an unknown count is never written as zero");
+  assert.ok(
+    !/0 passed/.test(markup),
+    "an unknown count is never written as zero",
+  );
   // The recorded summary is kept — under Technical details, not as a second
   // summary line in front of the operator.
-  assert.match(markup.slice(markup.indexOf("Technical details")), /1 command exited 0/);
+  assert.match(
+    markup.slice(markup.indexOf("Technical details")),
+    /1 command exited 0/,
+  );
   assert.ok(
-    !/1 command exited 0/.test(markup.slice(0, markup.indexOf("Technical details"))),
+    !/1 command exited 0/.test(
+      markup.slice(0, markup.indexOf("Technical details")),
+    ),
     "the recorded summary is not repeated in the default body",
   );
 });
 
-check("a multi-command verification never stamps one count on every command", () => {
-  // Mixed verification: a test command that prints counts and a build command
-  // that prints none. The single attempt-level count must not be attributed to
-  // the build command.
-  const mixed: RunDetailResponse = {
-    ...detail,
-    commands: [
-      { ...detail.commands[0]!, id: "command-test", name: "test", executable: "npm", args: ["test"] },
-      {
-        ...detail.commands[0]!,
-        id: "command-build",
-        name: "build",
-        executable: "npm",
-        args: ["run", "build"],
-        stdoutExcerpt: "vite build done in 182ms",
-        durationMs: 182,
-      },
-    ],
-  };
-  const markup = renderToStaticMarkup(
-    createElement(VerificationPanel, { detail: mixed }),
-  );
-  const buildAt = markup.indexOf("npm run build");
-  assert.ok(buildAt >= 0, "the build command is listed");
-  const buildRow = markup.slice(buildAt, markup.indexOf("</div></div>", buildAt));
-  assert.ok(
-    !/7 tests passed|7 passed/.test(buildRow),
-    "the test counts are not attributed to the build command",
-  );
-  assert.match(buildRow, /182 ms/);
-  // The counts appear once, at verification level, with the limitation stated.
-  assert.match(markup, /for this verification as a whole/);
-  const testAt = markup.indexOf("npm test");
-  const testRow = markup.slice(testAt, buildAt);
-  assert.ok(
-    !/7 tests passed|7 passed/.test(testRow),
-    "no per-command counts when the attempt has several commands",
-  );
-});
+check(
+  "a multi-command verification never stamps one count on every command",
+  () => {
+    // Mixed verification: a test command that prints counts and a build command
+    // that prints none. The single attempt-level count must not be attributed to
+    // the build command.
+    const mixed: RunDetailResponse = {
+      ...detail,
+      commands: [
+        {
+          ...detail.commands[0]!,
+          id: "command-test",
+          name: "test",
+          executable: "npm",
+          args: ["test"],
+        },
+        {
+          ...detail.commands[0]!,
+          id: "command-build",
+          name: "build",
+          executable: "npm",
+          args: ["run", "build"],
+          stdoutExcerpt: "vite build done in 182ms",
+          durationMs: 182,
+        },
+      ],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(VerificationPanel, { detail: mixed }),
+    );
+    const buildAt = markup.indexOf("npm run build");
+    assert.ok(buildAt >= 0, "the build command is listed");
+    const buildRow = markup.slice(
+      buildAt,
+      markup.indexOf("</div></div>", buildAt),
+    );
+    assert.ok(
+      !/7 tests passed|7 passed/.test(buildRow),
+      "the test counts are not attributed to the build command",
+    );
+    assert.match(buildRow, /182 ms/);
+    // The counts appear once, at verification level, with the limitation stated.
+    assert.match(markup, /for this verification as a whole/);
+    const testAt = markup.indexOf("npm test");
+    const testRow = markup.slice(testAt, buildAt);
+    assert.ok(
+      !/7 tests passed|7 passed/.test(testRow),
+      "no per-command counts when the attempt has several commands",
+    );
+  },
+);
 
 check("review leads with reviewer and findings, prose one level down", () => {
   const markup = renderToStaticMarkup(createElement(ReviewPanel, { detail }));
@@ -1033,7 +1373,10 @@ check("review leads with reviewer and findings, prose one level down", () => {
   // The prose sits behind Read full review, not in front of the findings.
   const findingsAt = markup.indexOf("Suggestions (2)");
   const proseAt = markup.indexOf("the fix is correct and the change is small");
-  assert.ok(findingsAt >= 0 && proseAt > findingsAt, "findings precede the prose");
+  assert.ok(
+    findingsAt >= 0 && proseAt > findingsAt,
+    "findings precede the prose",
+  );
   assert.match(markup, /Read full review/);
   // Provenance and the raw payload are folded under Technical details.
   assert.match(markup, /Technical details/);
@@ -1247,7 +1590,9 @@ check(
     assert.ok(!/>Agent started/.test(markup));
     // Newest first: the 12:05 approval request precedes the 11:00 start.
     const waitingAt = markup.indexOf("Waiting for your decision");
-    const startedAt = markup.indexOf("Claude Opus 4.8 started Structured review");
+    const startedAt = markup.indexOf(
+      "Claude Opus 4.8 started Structured review",
+    );
     assert.ok(
       waitingAt >= 0 && startedAt > waitingAt,
       "the newest activity is listed first",
@@ -1272,9 +1617,7 @@ check("the operator input gate asks the question next to the answer", () => {
         createdAt: "2026-09-22T12:06:00.000Z",
       },
     ],
-    attempts: [
-      { ...detail.attempts[0]!, status: "WAITING_INPUT" },
-    ],
+    attempts: [{ ...detail.attempts[0]!, status: "WAITING_INPUT" }],
   });
   const markup = renderToStaticMarkup(
     createElement(InputRequest, {
@@ -1291,7 +1634,9 @@ check("the operator input gate asks the question next to the answer", () => {
   assert.match(markup, /Implementation · attempt 1/);
   assert.match(markup, /Your answer/);
   assert.ok(
-    !/agent\.waiting|Source:|persisted/.test(markup.split("Technical details")[0]!),
+    !/agent\.waiting|Source:|persisted/.test(
+      markup.split("Technical details")[0]!,
+    ),
     "provenance stays out of the default question block",
   );
   assert.match(markup, /Technical details/);
@@ -1319,8 +1664,10 @@ check("the app shell renders its navigation and loading state", () => {
     assert.match(markup, /#\/new-run/);
     // The route is honoured before data arrives: the Agents nav item is current.
     assert.match(markup, /href="#\/agents" aria-current="page"/);
-    // No version is claimed before the bootstrap payload arrives.
-    assert.match(markup, /vunavailable/);
+    // The sidebar lists the destinations and nothing to count; the shell claims
+    // no version and prints no inventory before the bootstrap payload arrives.
+    assert.match(markup, /href="#\/runs">History</);
+    assert.doesNotMatch(markup, /vunavailable|nav__count|nav__project/);
     // Keyboard users can bypass the navigation, and the skip target exists.
     assert.match(markup, /class="skip-link" href="#main-content"/);
     assert.match(markup, /id="main-content" tabindex="-1"/);

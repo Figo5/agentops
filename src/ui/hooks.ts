@@ -6,7 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventRecord } from "../core/types.js";
 import type { AgentOpsClient, Bootstrap, RunDetailResponse } from "./api.js";
 import { describeError, parseSseEventFrame } from "./api.js";
-import { mergeEvents } from "./view-model.js";
+import {
+  attentionStateLabel,
+  mergeEvents,
+  runEvidenceLine,
+} from "./view-model.js";
 
 export interface AsyncResource<T> {
   data: T | null;
@@ -276,4 +280,89 @@ export function useResource<T>(
     () => ({ data, error, loading, reload }),
     [data, error, loading, reload],
   );
+}
+
+/** What the dashboard may say about one row's evidence. Never a guess. */
+export interface RunEvidenceState {
+  status: "loading" | "ready" | "unavailable";
+  /** The persisted evidence line, or `null` when nothing was recorded. */
+  line: string | null;
+  /** Row state word from the persisted gate; `null` falls back to the status. */
+  state?: string | null;
+}
+
+/** How many rows the dashboard will fetch evidence for, per render. */
+export const EVIDENCE_FETCH_LIMIT = 3;
+
+/**
+ * Bounded per-run evidence for the rows that need the operator.
+ *
+ * At most `limit` runs are fetched, one detail request each, in parallel; the
+ * fetch is cancelled when the set of runs changes or the view unmounts. Every
+ * outcome is reported: a row shows `loading` while its request is in flight and
+ * `unavailable` when the request failed, so the dashboard never implies that a
+ * missing evidence line means a clean run.
+ */
+export function useRunEvidence(
+  client: AgentOpsClient | null,
+  runIds: readonly string[],
+  limit = EVIDENCE_FETCH_LIMIT,
+): Record<string, RunEvidenceState> {
+  const ids = runIds.slice(0, Math.max(0, limit));
+  const key = ids.join("|");
+  const [state, setState] = useState<Record<string, RunEvidenceState>>({});
+
+  useEffect(() => {
+    const targets = key.length === 0 ? [] : key.split("|");
+    if (!client || targets.length === 0) {
+      setState((current) => (Object.keys(current).length === 0 ? current : {}));
+      return;
+    }
+    let cancelled = false;
+    setState(
+      Object.fromEntries(
+        targets.map((id) => [id, { status: "loading", line: null }]),
+      ) as Record<string, RunEvidenceState>,
+    );
+    void Promise.all(
+      targets.map(async (id): Promise<[string, RunEvidenceState]> => {
+        try {
+          const detail = await client.runDetail(id);
+          return [
+            id,
+            {
+              status: "ready",
+              line: runEvidenceLine({
+                status: detail.run.status,
+                reviewCycle: detail.run.reviewCycle,
+                policy: detail.run.policy,
+                failureReason: detail.run.failureReason,
+                interruptReason: detail.run.interruptReason,
+                pendingApproval: detail.pendingApproval,
+                reviewVerdicts: detail.reviewVerdicts,
+                attempts: detail.attempts,
+                tests: detail.tests,
+                agents: detail.agents,
+                events: detail.events,
+              }),
+              state: attentionStateLabel({
+                status: detail.run.status,
+                gate: detail.pendingApproval?.gate ?? null,
+              }),
+            },
+          ];
+        } catch {
+          return [id, { status: "unavailable", line: null, state: null }];
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setState(Object.fromEntries(entries) as Record<string, RunEvidenceState>);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, key]);
+
+  return state;
 }

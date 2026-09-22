@@ -5,24 +5,51 @@
  * counts have their own screens and are not repeated here. Empty categories are
  * not rendered at all, so a quiet day is a short page instead of a wall of
  * placeholder cards. Every number comes from the bootstrap payload.
+ *
+ * The rows that need the operator may carry one concise evidence line, read
+ * from that run's own records through the existing API (bounded to the first few
+ * rows). While the request is in flight the row says so, and a failed request
+ * says `Evidence unavailable` — a missing line never reads as a clean run.
  */
 import type { Bootstrap } from "../api.js";
-import { greetingFor, homeSummary } from "../view-model.js";
+import type { RunEvidenceState } from "../hooks.js";
+import { activeRowDetail, greetingFor, homeSummary } from "../view-model.js";
 import { Button } from "./Bits.js";
 import { RunSection } from "./RunRow.js";
 
 export function Home({
   bootstrap,
   now = new Date(),
+  evidence,
 }: {
   bootstrap: Bootstrap;
   /** Injectable clock so the greeting is deterministic in tests. */
   now?: Date;
+  /** Bounded evidence per run id, fetched by the shell; absent outside it. */
+  evidence?: Record<string, RunEvidenceState>;
 }) {
   const projectNames = Object.fromEntries(
     bootstrap.projects.map((project) => [project.id, project.name]),
   );
+  const agentNames = Object.fromEntries(
+    bootstrap.agents.map((agent) => [agent.id, agent.name]),
+  );
   const summary = homeSummary(bootstrap.runs);
+  /**
+   * What each running run is working on, from the run's own frozen plan and role
+   * mapping — no extra request, and nothing shown when the plan does not resolve.
+   */
+  const runningDetails = Object.fromEntries(
+    summary.running.map((run) => [
+      run.id,
+      activeRowDetail({
+        nextStageKey: run.nextStageKey,
+        plan: run.plan,
+        roleMapping: run.roleMapping,
+        agentNames,
+      }),
+    ]),
+  );
   const hasProjects = bootstrap.projects.length > 0;
   const hasRuns = bootstrap.runs.length > 0;
 
@@ -30,12 +57,7 @@ export function Home({
     <div className="view home-view">
       <header className="home-head">
         <h1 className="page-title">{greetingFor(now)}</h1>
-        <p className="home-head__meta">
-          {summary.attentionLabel}
-          {hasProjects
-            ? ` · ${bootstrap.projects.length} project${bootstrap.projects.length === 1 ? "" : "s"}`
-            : ""}
-        </p>
+        <p className="home-head__meta">{summary.attentionLabel}</p>
       </header>
 
       {!hasProjects ? (
@@ -43,7 +65,7 @@ export function Home({
           <h2>Add your first project</h2>
           <p>
             Register a local repository, then choose the agents and a workflow
-            template for it. Everything an agent does stays on this machine.
+            template for it. Run history stays on this machine.
           </p>
           <div>
             <Button
@@ -61,7 +83,8 @@ export function Home({
           <h2>Start your first workflow</h2>
           <p>
             Give a registered project a goal. The plan, every handoff and every
-            result are recorded here as the run progresses.
+            result are recorded here as the run progresses. Run history stays on
+            this machine.
           </p>
           <div className="row">
             <Button
@@ -78,28 +101,25 @@ export function Home({
         title="Needs you"
         runs={summary.needsYou}
         projectNames={projectNames}
-        hint="Gates and failures wait for a deliberate decision; the run never advances on its own."
+        evidence={evidence}
       />
       <RunSection
         title="Running"
         runs={summary.running}
         projectNames={projectNames}
-        hint="One active workflow per repository."
+        details={runningDetails}
       />
       <RunSection
         title="Recent"
         runs={summary.recent}
         projectNames={projectNames}
-        hint="Terminal runs are read-only history."
       />
 
       <footer className="home-foot">
-        <a href="#/projects">
+        <a className="home-foot__projects" href="#/projects">
           {bootstrap.projects.length} project
           {bootstrap.projects.length === 1 ? "" : "s"}
         </a>
-        <span aria-hidden="true">·</span>
-        <a href="#/runs">Run history</a>
       </footer>
     </div>
   );

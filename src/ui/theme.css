@@ -233,21 +233,23 @@ pre,
   background: var(--bg);
 }
 
-/* Compact sidebar: flatter than a panel, separated by one hairline. */
+/* Compact sidebar: a column of quiet links, one hairline, no inventory. */
 .nav {
   position: sticky;
   top: 0;
   align-self: start;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow-y: auto;
-  padding: 20px 12px 24px;
+  padding: 20px 12px;
   border-right: 1px solid var(--hairline);
   background: var(--bg);
 }
 
 .brand {
   display: block;
-  margin: 2px 8px 22px;
+  margin: 2px 8px 20px;
   border-bottom: none;
 }
 
@@ -271,14 +273,29 @@ pre,
 }
 
 .nav__section {
-  margin-top: 22px;
+  display: grid;
+  gap: 1px;
+  margin-top: 14px;
+}
+
+/* The hairline that separates navigation from what needs the operator. */
+.nav__section--ruled {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
 }
 
 .nav__label {
-  margin: 0 8px 6px;
+  margin: 0 9px 6px;
   font-size: var(--fs-micro);
   font-weight: 500;
   color: var(--text-2);
+}
+
+.nav__empty {
+  margin: 0 9px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
 }
 
 .nav__item {
@@ -331,42 +348,40 @@ pre,
   background: var(--danger);
 }
 
-.nav__item .nav__count {
-  margin-left: auto;
-  color: var(--text-2);
+/* A blocked run: the project is the label, the goal is the link's title. */
+.nav__item--needs {
   font-size: var(--fs-meta);
-  font-variant-numeric: tabular-nums;
 }
 
-.nav__project {
-  display: block;
-  padding: 6px 9px;
-  border-radius: var(--radius-sm);
-  color: var(--text-2);
-  font-size: var(--fs-meta);
+.nav__needs-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nav__more {
+  display: block;
+  margin: 2px 9px 0;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
   border-bottom: none;
 }
 
-.nav__project:hover {
-  background: var(--hover);
+.nav__more:hover {
   color: var(--text);
 }
 
-.nav__project[aria-current="page"] {
-  color: var(--text);
-  background: var(--accent-soft);
-}
-
-.nav__footer {
-  margin-top: 24px;
-  padding: 0 8px;
+/* Bottom of the sidebar: starting work, with the settings entry point to come. */
+.nav__bottom {
+  margin-top: auto;
+  padding-top: 14px;
   border-top: 1px solid var(--hairline);
-  padding-top: 12px;
-  color: var(--text-2);
-  font-size: var(--fs-micro);
+}
+
+.nav__item--new {
+  color: var(--text);
+  font-weight: 550;
 }
 
 .content {
@@ -1360,27 +1375,29 @@ textarea[aria-invalid="true"] {
 /* ------------------------------- 10. home ------------------------------ */
 
 /*
- * Operational home: a greeting, then calm hairline sections. No cards, no
- * equal-height grid, no inventory — sections are only rendered when they have
- * rows, so whitespace does the separating.
+ * Operational home: a 30px greeting, one attention sentence, then calm
+ * hairline sections. No cards, no equal-height grid, no inventory — sections are
+ * only rendered when they have rows, so whitespace does the separating.
  */
 .home-view {
   max-width: 1050px;
-  gap: 30px;
+  gap: 32px;
 }
 
 .home-head {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .home-head .page-title {
   font-size: var(--fs-page);
 }
 
+/* The one sentence about attention: quiet, never a second heading. */
 .home-head__meta {
   color: var(--text-2);
-  font-size: var(--fs-meta);
+  font-size: var(--fs-body);
 }
 
 .home-section {
@@ -1404,29 +1421,33 @@ textarea[aria-invalid="true"] {
   font-variant-numeric: tabular-nums;
 }
 
-.home-section__hint {
-  color: var(--text-2);
-  font-size: var(--fs-meta);
-  margin-top: -2px;
-}
-
 .run-list {
   display: grid;
   gap: 0;
 }
 
-/* One hairline-separated row; the text stack never pushes its neighbours. */
+/*
+ * One hairline-separated row; the text stack never pushes its neighbours. The
+ * row is padded inside its own negative margin so a hover tint spans the
+ * content column without moving anything.
+ */
 .run-row {
   display: flex;
   align-items: center;
   gap: 16px;
   min-width: 0;
-  padding: 14px 0;
+  padding: 14px 10px;
+  margin: 0 -10px;
   border-top: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
 }
 
 .run-row:first-child {
   border-top: none;
+}
+
+.run-row:hover {
+  background: var(--hover);
 }
 
 .run-row__text {
@@ -1436,13 +1457,14 @@ textarea[aria-invalid="true"] {
   min-width: 0;
 }
 
-.run-row__goal {
+/* Primary: the project this row belongs to. */
+.run-row__project {
+  color: var(--text);
   font-weight: 550;
   font-size: var(--fs-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
 }
 
 .run-row__meta {
@@ -1455,9 +1477,23 @@ textarea[aria-invalid="true"] {
   font-size: var(--fs-meta);
 }
 
-.run-row__project {
-  color: var(--text);
-  font-weight: 500;
+/* Secondary: the goal, quiet under the project name. */
+.run-row__goal {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60ch;
+}
+
+/* One concise evidence line, only when the run's records contain one. */
+.run-row__evidence,
+.run-row__detail {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .run-row__status,
@@ -1466,6 +1502,12 @@ textarea[aria-invalid="true"] {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Status reads as an icon plus a word: quiet, no filled pill, no shout. */
+.run-row__status {
+  font-size: var(--fs-meta);
+  white-space: nowrap;
 }
 
 .run-row__link {
@@ -1505,6 +1547,7 @@ textarea[aria-invalid="true"] {
   font-size: var(--fs-body);
 }
 
+/* Below the sections: one quiet way into the projects screen, nothing else. */
 .home-foot {
   display: flex;
   align-items: center;
@@ -1513,12 +1556,12 @@ textarea[aria-invalid="true"] {
   font-size: var(--fs-meta);
 }
 
-.home-foot a {
+.home-foot__projects {
   color: var(--text-2);
   border-bottom: 1px solid var(--hairline-2);
 }
 
-.home-foot a:hover {
+.home-foot__projects:hover {
   color: var(--text);
   border-bottom-color: var(--text-2);
 }
@@ -2515,7 +2558,7 @@ dt {
   .nav {
     position: static;
     height: auto;
-    display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
@@ -2540,7 +2583,17 @@ dt {
     gap: 4px;
   }
 
+  .nav__section--ruled {
+    padding-top: 0;
+    border-top: none;
+  }
+
   .nav__label {
+    display: none;
+  }
+
+  .nav__empty,
+  .nav__more {
     display: none;
   }
 
@@ -2548,12 +2601,14 @@ dt {
     width: auto;
   }
 
-  .nav__project {
-    max-width: 160px;
+  .nav__needs-label {
+    max-width: 14ch;
   }
 
-  .nav__footer {
-    display: none;
+  .nav__bottom {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
   }
 
   /* Milestones stack instead of squeezing; activity meta drops to its own row. */

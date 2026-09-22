@@ -11,8 +11,18 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "./api.js";
-import { useBootstrap, useDebouncedCallback, useRunEvents } from "./hooks.js";
-import { parseRoute, routeHref, type Route } from "./view-model.js";
+import {
+  useBootstrap,
+  useDebouncedCallback,
+  useRunEvents,
+  useRunEvidence,
+} from "./hooks.js";
+import {
+  homeSummary,
+  parseRoute,
+  routeHref,
+  type Route,
+} from "./view-model.js";
 import { AgentsView } from "./components/AgentsView.js";
 import { Button, Card, ErrorBox, Loading, Notice } from "./components/Bits.js";
 import { Home } from "./components/Home.js";
@@ -189,6 +199,20 @@ export function App() {
     void bootstrap.reload();
   }, 500);
 
+  /**
+   * Bounded evidence for the dashboard rows that need the operator: at most a
+   * few detail requests, issued by the same client that served the bootstrap.
+   * The hook is called before the early returns below so hook order is stable.
+   */
+  const needsYouIds = useMemo(
+    () =>
+      bootstrap.data
+        ? homeSummary(bootstrap.data.runs).needsYou.map((run) => run.id)
+        : [],
+    [bootstrap.data],
+  );
+  const runEvidence = useRunEvidence(client, needsYouIds);
+
   useEffect(() => {
     if (stream.events.length === 0) return;
     onStreamEvent();
@@ -213,7 +237,7 @@ export function App() {
         >
           Skip to main content
         </a>
-        <Nav bootstrap={null} route={route} connection="connecting" />
+        <Nav bootstrap={null} route={route} />
         <main className="content" id="main-content" tabIndex={-1} ref={mainRef}>
           <div className="view">
             <Loading label="Loading bootstrap from the local AgentOps server…" />
@@ -238,7 +262,7 @@ export function App() {
         >
           Skip to main content
         </a>
-        <Nav bootstrap={null} route={route} connection="offline" />
+        <Nav bootstrap={null} route={route} />
         <main className="content" id="main-content" tabIndex={-1} ref={mainRef}>
           <div className="view">
             <Card title="Cannot reach the AgentOps server">
@@ -281,47 +305,49 @@ export function App() {
       >
         Skip to main content
       </a>
-      <Nav
-        bootstrap={data}
-        route={route}
-        connection={runId ? stream.status : "idle"}
-      />
+      <Nav bootstrap={data} route={route} />
       <main className="content" id="main-content" tabIndex={-1} ref={mainRef}>
-        <header className="topbar">
-          <div className="topbar__title">
-            {route.view === "run" ? (
-              /* The run view owns the page heading: the goal is the 30px h1. */
-              <span className="topbar__crumb">{titleFor(route)}</span>
-            ) : (
-              <h1>{titleFor(route)}</h1>
-            )}
-            <span className="topbar__goal">
-              {subtitleFor(route, data.runs.length)}
-            </span>
-          </div>
-          <div className="topbar__spacer" />
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => (window.location.hash = "#/runs")}
-          >
-            History
-          </Button>
-          <Button
-            size="sm"
-            /* On a run page the task at hand is that run: starting a new
-               workflow is quiet navigation, not the primary action. */
-            variant={route.view === "run" ? "ghost" : "primary"}
-            onClick={() =>
-              (window.location.hash = routeHref({
-                view: "new-run",
-                projectId: null,
-              }))
-            }
-          >
-            New workflow
-          </Button>
-        </header>
+        {/*
+          The operational home owns its own heading — the 30px greeting — so the
+          top bar is not rendered there: no second page title, and the sidebar
+          already carries History and New workflow. Every other view states its
+          name in the bar.
+        */}
+        {route.view === "home" ? null : (
+          <header className="topbar">
+            <div className="topbar__title">
+              {route.view === "run" ? (
+                /* The run view owns the page heading: the goal is the 30px h1. */
+                <span className="topbar__crumb">{titleFor(route)}</span>
+              ) : (
+                <h1>{titleFor(route)}</h1>
+              )}
+              <span className="topbar__goal">{subtitleFor(route)}</span>
+            </div>
+            <div className="topbar__spacer" />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => (window.location.hash = "#/runs")}
+            >
+              History
+            </Button>
+            <Button
+              size="sm"
+              /* On a run page the task at hand is that run: starting a new
+                 workflow is quiet navigation, not the primary action. */
+              variant={route.view === "run" ? "ghost" : "primary"}
+              onClick={() =>
+                (window.location.hash = routeHref({
+                  view: "new-run",
+                  projectId: null,
+                }))
+              }
+            >
+              New workflow
+            </Button>
+          </header>
+        )}
 
         {bootstrap.error ? (
           <div className="view" style={{ paddingBottom: 0 }}>
@@ -334,7 +360,9 @@ export function App() {
           </div>
         ) : null}
 
-        {route.view === "home" ? <Home bootstrap={data} /> : null}
+        {route.view === "home" ? (
+          <Home bootstrap={data} evidence={runEvidence} />
+        ) : null}
         {route.view === "projects" ? (
           <ProjectsView
             client={client}
@@ -372,12 +400,6 @@ export function App() {
             streamVersion={streamVersion}
           />
         ) : null}
-
-        <footer className="view faint small" style={{ paddingTop: 0 }}>
-          AgentOps {data.version} · {data.projects.length} project(s) ·{" "}
-          {data.agents.length} agent(s) · {data.templates.length} template(s) ·{" "}
-          {data.runs.length} run(s) · local-only server, same-origin client.
-        </footer>
       </main>
     </div>
   );
@@ -386,7 +408,8 @@ export function App() {
 function titleFor(route: Route): string {
   switch (route.view) {
     case "home":
-      return "Mission control";
+      /* Not rendered: the home view owns its 30px greeting. */
+      return "Today";
     case "projects":
       return "Projects";
     case "agents":
@@ -402,11 +425,10 @@ function titleFor(route: Route): string {
   }
 }
 
-function subtitleFor(route: Route, runCount: number): string {
+function subtitleFor(route: Route): string {
   if (route.view === "runs")
     return "persisted search across projects, agents, status, dates, branch and verdict";
   /* A run's own screen shows its project, goal and state: never a raw id here. */
   if (route.view === "run") return "";
-  if (route.view === "home") return `${runCount} run(s) on record`;
   return "";
 }

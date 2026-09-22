@@ -33,7 +33,7 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
 
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.status, 0, `render harness failed:\n${output}`);
-  assert.match(output, /20\/20 render checks passed/);
+  assert.match(output, /24\/24 render checks passed/);
   assert.match(output, /ok - first-run empty state offers one useful action/);
   assert.match(
     output,
@@ -42,6 +42,22 @@ test("UI components render real markup (server-rendered, no DOM)", () => {
   assert.match(
     output,
     /ok - empty categories are not rendered as placeholder sections/,
+  );
+  assert.match(
+    output,
+    /ok - needs-you rows carry one persisted evidence line, or say why not/,
+  );
+  assert.match(
+    output,
+    /ok - the sidebar navigates and names blocked projects, with no inventory/,
+  );
+  assert.match(
+    output,
+    /ok - the shell renders no footer inventory and no duplicate home title/,
+  );
+  assert.match(
+    output,
+    /ok - a row states its evidence, its loading state or its failure/,
   );
   assert.match(
     output,

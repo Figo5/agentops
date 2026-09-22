@@ -46,12 +46,17 @@ export function Pill({
  */
 export function StatusMark({
   status,
+  label,
   size = "sm",
   className,
+  title,
 }: {
   status: string | null | undefined;
+  /** Sentence-case word to show instead of the status's own label. */
+  label?: string;
   size?: "sm" | "lg";
   className?: string;
+  title?: string;
 }) {
   return (
     <span
@@ -61,12 +66,12 @@ export function StatusMark({
         size === "lg" && "status--lg",
         className,
       )}
-      title={status ?? undefined}
+      title={title ?? status ?? undefined}
     >
       <span className="status__icon" aria-hidden="true">
         {statusIcon(status)}
       </span>
-      <span className="status__word">{statusLabel(status)}</span>
+      <span className="status__word">{label ?? statusLabel(status)}</span>
     </span>
   );
 }
@@ -121,9 +126,7 @@ export function Disclosure({
       className={classNames("disclosure", className)}
       open={open}
       onToggle={
-        onToggle
-          ? (event) => onToggle(event.currentTarget.open)
-          : undefined
+        onToggle ? (event) => onToggle(event.currentTarget.open) : undefined
       }
     >
       <summary>{summary}</summary>

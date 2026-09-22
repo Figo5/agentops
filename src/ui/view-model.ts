@@ -1410,6 +1410,50 @@ export function approvalDecisionOptions(
 /* Approval evidence and operator input                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The attempt whose verification speaks for the run.
+ *
+ * One rule, shared by the run screen and the dashboard: the gate's own stage
+ * first, then the cycle the verdict came from, otherwise the newest verification
+ * recorded anywhere in the run — measured by the newest test record of each
+ * attempt, never by row order. Never a blend of two records and never a sum.
+ */
+function verificationAttemptFor(input: {
+  attempts: readonly Pick<
+    AttemptRecord,
+    "id" | "attemptNumber" | "stageKey" | "verification"
+  >[];
+  tests: readonly Pick<TestRunRecord, "attemptId" | "createdAt">[];
+  stageKey?: string | null;
+  cycle?: number | null;
+}) {
+  const testRecency = (attemptId: string): string =>
+    input.tests
+      .filter((test) => test.attemptId === attemptId)
+      .reduce(
+        (newest, test) => (test.createdAt > newest ? test.createdAt : newest),
+        "",
+      );
+  const verified = input.attempts.filter((candidate) => candidate.verification);
+  const byRecency = [...verified].sort((a, b) =>
+    testRecency(a.id).localeCompare(testRecency(b.id)),
+  );
+  return (
+    (input.stageKey
+      ? verified.find((candidate) => candidate.stageKey === input.stageKey)
+      : undefined) ??
+    (input.cycle != null
+      ? verified.find(
+          (candidate) =>
+            candidate.attemptNumber === input.cycle &&
+            (!input.stageKey || candidate.stageKey === input.stageKey),
+        )
+      : undefined) ??
+    byRecency.at(-1) ??
+    null
+  );
+}
+
 export interface ApprovalEvidenceIssue {
   severity: string;
   description: string;
@@ -1512,31 +1556,12 @@ export function approvalEvidenceView(input: {
       .filter((verdict) => verdict.stageKey === approval.stageKey)
       .at(-1) ?? input.verdicts.at(-1);
   const tests = input.tests ?? [];
-  /** Newest test record timestamp for one attempt (`""` when it has none). */
-  const testRecency = (attemptId: string): string =>
-    tests
-      .filter((test) => test.attemptId === attemptId)
-      .reduce(
-        (newest, test) => (test.createdAt > newest ? test.createdAt : newest),
-        "",
-      );
-  const verified = input.attempts.filter((candidate) => candidate.verification);
-  const byRecency = [...verified].sort((a, b) =>
-    testRecency(a.id).localeCompare(testRecency(b.id)),
-  );
-  const attempt =
-    // 1. the gate's own stage, or 2. the attempt the verdict came from,
-    // otherwise 3. the newest verification recorded anywhere in the run —
-    // never a blend, and never a sum of two verification records.
-    verified.find((candidate) => candidate.stageKey === approval.stageKey) ??
-    (verdictRecord
-      ? verified.find(
-          (candidate) =>
-            candidate.attemptNumber === verdictRecord.cycle &&
-            candidate.stageKey === verdictRecord.stageKey,
-        )
-      : undefined) ??
-    byRecency.at(-1);
+  const attempt = verificationAttemptFor({
+    attempts: input.attempts,
+    tests,
+    stageKey: approval.stageKey,
+    cycle: verdictRecord?.cycle ?? null,
+  });
   const counts = attempt
     ? attemptCountsView({
         attemptId: attempt.id,
@@ -1813,6 +1838,9 @@ export interface HomeSummary {
  * running, and what finished recently. Empty categories are absent from the
  * model entirely (the view renders nothing for them) instead of appearing as
  * placeholder cards.
+ *
+ * The attention sentence names the unit (`1 run needs your attention`), never a
+ * bare count, and a quiet day reads as one calm all-clear sentence.
  */
 export function homeSummary(
   runs: readonly RunRecord[],
@@ -1821,13 +1849,189 @@ export function homeSummary(
   const { active, waiting, failed, recent } = homeSections(runs, recentLimit);
   const needsYou = [...waiting, ...failed].sort(byUpdatedDesc);
   const attention = needsYou.length + active.length;
-  let attentionLabel = "Nothing needs you right now";
+  const needsSentence =
+    needsYou.length === 1
+      ? "1 run needs your attention"
+      : `${needsYou.length} runs need your attention`;
+  let attentionLabel: string;
   if (needsYou.length > 0 && active.length > 0)
-    attentionLabel = `${needsYou.length} need you · ${active.length} running`;
-  else if (needsYou.length > 0)
-    attentionLabel = `${needsYou.length} need${needsYou.length === 1 ? "s" : ""} you`;
-  else if (active.length > 0) attentionLabel = `${active.length} running`;
+    attentionLabel = `${needsSentence} · ${active.length} running`;
+  else if (needsYou.length > 0) attentionLabel = needsSentence;
+  else if (active.length > 0)
+    attentionLabel = `Nothing needs you right now · ${active.length} running`;
+  else attentionLabel = "Nothing needs you right now";
   return { needsYou, running: active, recent, attention, attentionLabel };
+}
+
+/* ------------------------------------------------------------------ */
+/* Concise evidence for a row that needs the operator                   */
+/* ------------------------------------------------------------------ */
+
+/** Structural slice of the run detail aggregate the dashboard reads. */
+export interface RunEvidenceInput {
+  status: string;
+  reviewCycle: number;
+  policy: { maxReviewCycles: number };
+  failureReason: string | null;
+  interruptReason: string | null;
+  pendingApproval: Pick<ApprovalRecord, "gate" | "reason" | "stageKey"> | null;
+  reviewVerdicts: readonly ReviewVerdictRecord[];
+  attempts: readonly Pick<
+    AttemptRecord,
+    | "id"
+    | "attemptNumber"
+    | "stageKey"
+    | "agentId"
+    | "verification"
+    | "reviewVerdictId"
+    | "status"
+    | "resultSummary"
+  >[];
+  tests: readonly Pick<
+    TestRunRecord,
+    | "attemptId"
+    | "framework"
+    | "passed"
+    | "failed"
+    | "skipped"
+    | "total"
+    | "parsedConfidently"
+    | "createdAt"
+  >[];
+  agents: readonly Pick<AgentRecord, "id" | "name">[];
+  events: readonly EventRecord[];
+}
+
+/**
+ * Which stage a running run is working on, and who owns it.
+ *
+ * Read from the run's own frozen plan (`nextStageKey` → stage name and role) and
+ * the role mapping it was created with, resolved to the agent's display name
+ * when that agent still exists. An unresolvable piece is dropped rather than
+ * guessed; when nothing resolves the answer is `null` and the row keeps its
+ * status word alone.
+ */
+export function activeRowDetail(input: {
+  nextStageKey: string | null;
+  plan: StagePlan;
+  roleMapping: Record<string, string>;
+  agentNames?: Record<string, string>;
+}): string | null {
+  const key = input.nextStageKey;
+  if (!key) return null;
+  const stage = input.plan.stages.find((candidate) => candidate.key === key);
+  if (!stage) return null;
+  const agentId = input.roleMapping[stage.role] ?? null;
+  const parts = [stage.name];
+  if (agentId) parts.push(input.agentNames?.[agentId] ?? agentId);
+  return parts.join(" · ");
+}
+
+export const EVIDENCE_MAX = 160;
+
+/**
+ * The row's own state word for a run that is blocked on a human.
+ *
+ * The persisted gate is what makes the row specific: a final acceptance gate
+ * reads `Ready for final approval`, a rejected review reads `Changes
+ * requested`, an exhausted fix loop says so, and a run waiting on the operator
+ * reads `Needs your input`. `null` means the detail has not been read, so the
+ * row falls back to the run's own status word — a generic `Waiting for you` is
+ * only ever shown when nothing more specific is actually known.
+ */
+export function attentionStateLabel(input: {
+  status: string;
+  gate: string | null;
+}): string | null {
+  if (input.status === "WAITING_INPUT") return "Needs your input";
+  if (input.status !== "WAITING_APPROVAL") return null;
+  switch (input.gate) {
+    case "final_acceptance":
+      return "Ready for final approval";
+    case "review_reject":
+      return "Changes requested";
+    case "review_cycle_exhausted":
+      return "Fix cycles exhausted";
+    case null:
+      return null;
+    default:
+      return "Ready for review";
+  }
+}
+
+/**
+ * One concise, persisted evidence line for a row that needs the operator.
+ *
+ * A gate states who reviewed and what the verification recorded
+ * (`Claude Opus 4.8 rejected · 7 tests passed`); a run waiting on input states
+ * the agent's own question, verbatim; a failed run states its recorded reason,
+ * or the last verification outcome when there is no reason. When nothing was
+ * recorded the answer is `null` — the row then shows its status alone, because
+ * an absent evidence record is not evidence of a clean run.
+ */
+export function runEvidenceLine(input: RunEvidenceInput): string | null {
+  const evidence = (): ApprovalEvidence | null =>
+    approvalEvidenceView({
+      approval: input.pendingApproval,
+      reviewCycle: reviewCycleView({
+        reviewCycle: input.reviewCycle,
+        policy: input.policy,
+      }),
+      verdicts: input.reviewVerdicts,
+      attempts: input.attempts,
+      tests: input.tests,
+      agents: input.agents,
+    });
+
+  if (input.status === "WAITING_APPROVAL") {
+    const view = evidence();
+    if (!view || (!view.verdict && !view.verification)) return null;
+    return truncate(singleLine(approvalSummaryLine(view)), EVIDENCE_MAX);
+  }
+
+  if (input.status === "WAITING_INPUT") {
+    const question = pendingInputQuestion({
+      events: input.events,
+      attempts: input.attempts,
+    });
+    const text = singleLine(question.text);
+    if (question.source === "none" || text.length === 0) return null;
+    return truncate(`Agent asked: ${text}`, EVIDENCE_MAX);
+  }
+
+  if (input.status === "FAILED" || input.status === "INTERRUPTED") {
+    const reason = firstNonEmpty([
+      input.status === "FAILED" ? input.failureReason : input.interruptReason,
+      input.failureReason,
+    ]);
+    if (reason) return truncate(singleLine(reason), EVIDENCE_MAX);
+    const attempt = verificationAttemptFor({
+      attempts: input.attempts,
+      tests: input.tests,
+    });
+    if (attempt?.verification) {
+      const counts = attemptCountsView({
+        attemptId: attempt.id,
+        verification: attempt.verification,
+        tests: input.tests,
+      });
+      return truncate(
+        verificationLabel({ ...attempt.verification, counts: counts.counts }),
+        EVIDENCE_MAX,
+      );
+    }
+    return null;
+  }
+
+  return null;
+}
+
+function firstNonEmpty(
+  values: readonly (string | null | undefined)[],
+): string | null {
+  for (const value of values)
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  return null;
 }
 
 /* ------------------------------------------------------------------ */

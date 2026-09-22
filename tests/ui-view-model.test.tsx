@@ -27,11 +27,13 @@ import {
   UNKNOWN,
   agentStateLabel,
   agentToForm,
+  activeRowDetail,
   approvalDecisionOptions,
   approvalEvidenceView,
   approvalSummaryLine,
   artifactView,
   attemptCountsView,
+  attentionStateLabel,
   buildRunSearchParams,
   categoryCounts,
   classifyDiff,
@@ -44,6 +46,7 @@ import {
   formatBytes,
   formatCount,
   formatDuration,
+  EVIDENCE_MAX,
   greetingFor,
   homeSections,
   homeSummary,
@@ -51,6 +54,7 @@ import {
   issueTally,
   lastEventId,
   mergeEvents,
+  runEvidenceLine,
   parseArgsJson,
   parseDiffStats,
   parseRoute,
@@ -513,7 +517,9 @@ test("milestones group the frozen plan into plain, honest steps", () => {
   assert.equal(review.stages[0]!.statusWord, "Waiting for you");
   // No raw enum ever leaves the model as display copy.
   assert.ok(
-    !milestones.some((milestone) => /WAITING_APPROVAL/.test(milestone.stateWord)),
+    !milestones.some((milestone) =>
+      /WAITING_APPROVAL/.test(milestone.stateWord),
+    ),
   );
   // The last two plan stages are the final milestone, not a Verify step.
   assert.deepEqual(
@@ -551,7 +557,9 @@ test("a milestone with no stages is omitted instead of drawn empty", () => {
 test("the final milestone is the last verification plus the human gate", () => {
   const withoutReview = {
     ...plan,
-    stages: plan.stages.filter((entry) => entry.loop === null && entry.kind !== "review"),
+    stages: plan.stages.filter(
+      (entry) => entry.loop === null && entry.kind !== "review",
+    ),
   };
   const milestones = buildRunMilestones(
     withoutReview,
@@ -583,7 +591,8 @@ test("the run state is the six semantic sentences, never the enum", () => {
     "Ready for your review",
   );
   assert.equal(
-    runStateView({ status: "WAITING_APPROVAL", gate: "review_reject" }).headline,
+    runStateView({ status: "WAITING_APPROVAL", gate: "review_reject" })
+      .headline,
     "Changes requested",
   );
   assert.equal(
@@ -616,10 +625,7 @@ test("the run state is the six semantic sentences, never the enum", () => {
     }).headline,
     "Implementation failed",
   );
-  assert.equal(
-    runStateView({ status: "COMPLETED" }).headline,
-    "Completed",
-  );
+  assert.equal(runStateView({ status: "COMPLETED" }).headline, "Completed");
   // A persisted enum is never used as the sentence.
   assert.ok(
     !runStateView({ status: "RUNNING", stage: review }).headline.includes(
@@ -687,16 +693,19 @@ test("activity sentences are lifecycle lines, never output frames", () => {
   );
   assert.equal(activitySentence(heartbeat, context), null);
 
-  const entries = activityEntries([started, output, failed, heartbeat], context);
+  const entries = activityEntries(
+    [started, output, failed, heartbeat],
+    context,
+  );
   assert.deepEqual(
     entries.map((entry) => entry.id),
     [1, 3],
   );
   // Only the failed line is flagged as something that went wrong.
   assert.deepEqual(
-    activityEntries([started, output, failed], context, { attentionOnly: true }).map(
-      (entry) => entry.id,
-    ),
+    activityEntries([started, output, failed], context, {
+      attentionOnly: true,
+    }).map((entry) => entry.id),
     [3],
   );
 
@@ -781,10 +790,7 @@ test("the active-work sentence names the real work", () => {
     activeWorkSentence(review, "Claude Opus 4.8"),
     "Claude Opus 4.8 is reviewing",
   );
-  assert.equal(
-    activeWorkSentence(review, null),
-    "Review is running",
-  );
+  assert.equal(activeWorkSentence(review, null), "Review is running");
   assert.equal(activeWorkSentence(null, null), "Implementation is running");
 });
 
@@ -968,7 +974,10 @@ test("decision facts never claim a pass that was not recorded", () => {
       }),
     ],
   })!;
-  assert.equal(blockerFact(invalid).label, "Reviewer payload failed validation");
+  assert.equal(
+    blockerFact(invalid).label,
+    "Reviewer payload failed validation",
+  );
   assert.equal(blockerFact(invalid).tone, "danger");
   assert.match(blockerFact(invalid).detail!, /unvalidated/);
 });
@@ -1429,7 +1438,11 @@ test("home summary keeps only actionable sections and counts attention", () => {
     ["r5", "r6", "r7"],
   );
   assert.equal(summary.attention, 4);
-  assert.equal(summary.attentionLabel, "3 need you · 1 running");
+  // The attention sentence names the unit, never a bare count.
+  assert.equal(
+    summary.attentionLabel,
+    "3 runs need your attention · 1 running",
+  );
 
   const quiet = homeSummary([runs[4]!]);
   assert.deepEqual(quiet.needsYou, []);
@@ -1438,13 +1451,198 @@ test("home summary keeps only actionable sections and counts attention", () => {
   assert.equal(quiet.attentionLabel, "Nothing needs you right now");
 
   const runningOnly = homeSummary([runs[0]!]);
-  assert.equal(runningOnly.attentionLabel, "1 running");
+  assert.equal(
+    runningOnly.attentionLabel,
+    "Nothing needs you right now · 1 running",
+  );
+
+  const single = homeSummary([runs[1]!]);
+  assert.equal(single.attentionLabel, "1 run needs your attention");
 
   // The greeting is deterministic from the clock the caller supplies.
   assert.equal(greetingFor(new Date("2026-09-22T02:00:00")), "Still up");
   assert.equal(greetingFor(new Date("2026-09-22T09:00:00")), "Good morning");
   assert.equal(greetingFor(new Date("2026-09-22T14:00:00")), "Good afternoon");
   assert.equal(greetingFor(new Date("2026-09-22T20:00:00")), "Good evening");
+});
+
+test("the home states persisted evidence for a blocked row, or nothing", () => {
+  const base = {
+    reviewCycle: 1,
+    policy: { maxReviewCycles: 2 },
+    failureReason: null,
+    interruptReason: null,
+    pendingApproval: null,
+    reviewVerdicts: [],
+    attempts: [],
+    tests: [],
+    agents: [],
+    events: [],
+  };
+
+  // A gate states who reviewed and what the verification recorded, using the
+  // same durable verdict→attempt→agent path the run screen uses.
+  const gate = runEvidenceLine({
+    ...base,
+    status: "WAITING_APPROVAL",
+    pendingApproval: {
+      gate: "review_reject",
+      reason: null,
+      stageKey: "review",
+    },
+    attempts: [attempt("attempt-review", 1, "review", "passed")],
+    tests: [testRun("test-1", "attempt-review", "2026-09-22T10:05:00.000Z", 7)],
+    agents: [{ id: "agent-impl", name: "Claude Opus 4.8" }],
+    reviewVerdicts: [
+      verdictRecord({ id: "verdict-1", verdict: "REJECT", cycle: 1 }),
+    ],
+  });
+  assert.equal(gate, "Claude Opus 4.8 rejected · 7 tests passed");
+
+  // No verdict and no verification: absent evidence is not "clean".
+  assert.equal(
+    runEvidenceLine({
+      ...base,
+      status: "WAITING_APPROVAL",
+      pendingApproval: {
+        gate: "final_acceptance",
+        reason: null,
+        stageKey: "human",
+      },
+    }),
+    null,
+  );
+
+  // The agent's own question, verbatim, is the input gate's evidence.
+  const question = runEvidenceLine({
+    ...base,
+    status: "WAITING_INPUT",
+    attempts: [
+      {
+        ...attempt("attempt-1", 1, "implement", null),
+        status: "WAITING_INPUT",
+      },
+    ],
+    events: [
+      event(1, {
+        type: "agent.waiting",
+        payload: { message: "Which branch should I target?" },
+      }),
+    ],
+  });
+  assert.equal(question, "Agent asked: Which branch should I target?");
+
+  // A failed run states its recorded reason; with no reason, the last
+  // verification outcome stands in, and with neither the answer is null.
+  assert.equal(
+    runEvidenceLine({
+      ...base,
+      status: "FAILED",
+      failureReason: "verification command exited 1",
+    }),
+    "verification command exited 1",
+  );
+  assert.equal(
+    runEvidenceLine({
+      ...base,
+      status: "FAILED",
+      attempts: [attempt("attempt-verify", 1, "verify", "passed")],
+      tests: [
+        testRun("test-2", "attempt-verify", "2026-09-22T10:06:00.000Z", 5),
+      ],
+    }),
+    "Command passed · 5/5 passed",
+  );
+  assert.equal(runEvidenceLine({ ...base, status: "FAILED" }), null);
+
+  // Long records are truncated rather than wrapped or silently dropped.
+  const long = runEvidenceLine({
+    ...base,
+    status: "FAILED",
+    failureReason: "x".repeat(400),
+  })!;
+  assert.ok(
+    long.length <= EVIDENCE_MAX,
+    `expected truncation, got ${long.length}`,
+  );
+  assert.match(long, /…$/);
+});
+
+test("a blocked row's state word comes from the persisted gate", () => {
+  // The gate decides the word: a final acceptance gate is not a generic wait.
+  assert.equal(
+    attentionStateLabel({
+      status: "WAITING_APPROVAL",
+      gate: "final_acceptance",
+    }),
+    "Ready for final approval",
+  );
+  assert.equal(
+    attentionStateLabel({ status: "WAITING_APPROVAL", gate: "review_reject" }),
+    "Changes requested",
+  );
+  assert.equal(
+    attentionStateLabel({
+      status: "WAITING_APPROVAL",
+      gate: "review_cycle_exhausted",
+    }),
+    "Fix cycles exhausted",
+  );
+  assert.equal(
+    attentionStateLabel({ status: "WAITING_APPROVAL", gate: "some_new_gate" }),
+    "Ready for review",
+  );
+  assert.equal(
+    attentionStateLabel({ status: "WAITING_INPUT", gate: null }),
+    "Needs your input",
+  );
+  // Nothing known: the row keeps the run's own status word instead of guessing.
+  assert.equal(
+    attentionStateLabel({ status: "WAITING_APPROVAL", gate: null }),
+    null,
+  );
+  assert.equal(attentionStateLabel({ status: "FAILED", gate: null }), null);
+  assert.equal(attentionStateLabel({ status: "RUNNING", gate: null }), null);
+});
+
+test("a running row names the stage and the agent from the run's own plan", () => {
+  const record = run("RUNNING", "2026-09-22T12:00:00.000Z", "r1");
+  assert.equal(
+    activeRowDetail({
+      nextStageKey: record.nextStageKey,
+      plan: record.plan,
+      roleMapping: record.roleMapping,
+      agentNames: { "agent-impl": "Claude Opus 4.8" },
+    }),
+    "Implementation · Claude Opus 4.8",
+  );
+  // An agent that no longer exists is shown by its id, never a made-up name.
+  assert.equal(
+    activeRowDetail({
+      nextStageKey: "implement",
+      plan: record.plan,
+      roleMapping: { implementer: "agent-gone" },
+      agentNames: {},
+    }),
+    "Implementation · agent-gone",
+  );
+  // Nothing to resolve: no line at all, so the row keeps its status word.
+  assert.equal(
+    activeRowDetail({
+      nextStageKey: null,
+      plan: record.plan,
+      roleMapping: {},
+    }),
+    null,
+  );
+  assert.equal(
+    activeRowDetail({
+      nextStageKey: "not-in-this-plan",
+      plan: record.plan,
+      roleMapping: {},
+    }),
+    null,
+  );
 });
 
 /* -------------------------------- routing ------------------------------ */

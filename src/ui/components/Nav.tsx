@@ -1,10 +1,21 @@
 /**
- * Left navigation: AGENTOPS wordmark, workspace routes, registered projects and
- * the runs that need attention. Counts come from the bootstrap payload only.
+ * Left navigation: the AGENTOPS wordmark, the four places an operator goes, and
+ * a compact list of the runs that need them.
+ *
+ * The sidebar is navigation, not an inventory: no project list, no open-run
+ * list, no counters that repeat what a screen already says. The `Needs you`
+ * block names the project of each run that is blocked on a human (at most a few,
+ * with the goal as the link's title) so the operator can see what is stuck
+ * without opening the dashboard. `+ New workflow` sits at the bottom, where the
+ * settings entry point will join it.
  */
 import type { Bootstrap } from "../api.js";
-import type { Route } from "../view-model.js";
-import { classNames, routeHref, type Tone } from "../view-model.js";
+import {
+  routeHref,
+  homeSummary,
+  type Route,
+  type Tone,
+} from "../view-model.js";
 
 function dotClass(tone: Tone): string {
   if (tone === "active") return "nav__dot nav__dot--active";
@@ -21,29 +32,25 @@ function toneForStatus(status: string): Tone {
   return "neutral";
 }
 
+/** How many blocked runs the sidebar names before deferring to the dashboard. */
+export const NAV_NEEDS_YOU_LIMIT = 3;
+
 export function Nav({
   bootstrap,
   route,
-  connection,
 }: {
   bootstrap: Bootstrap | null;
   route: Route;
-  connection: string;
 }) {
   const projects = bootstrap?.projects ?? [];
   const runs = bootstrap?.runs ?? [];
-  const open = runs.filter(
-    (run) => run.status !== "COMPLETED" && run.status !== "CANCELLED",
-  );
-  const waiting = runs.filter(
-    (run) =>
-      run.status === "WAITING_APPROVAL" || run.status === "WAITING_INPUT",
+  // Same model as the dashboard, so the two can never disagree about what needs
+  // the operator or in which order.
+  const needsYou = homeSummary(runs).needsYou;
+  const projectNames = Object.fromEntries(
+    projects.map((project) => [project.id, project.name]),
   );
   const active = route.view === "run" ? route.runId : null;
-  const projectId =
-    route.view === "projects" || route.view === "new-run"
-      ? route.projectId
-      : null;
 
   return (
     <nav className="nav" aria-label="Primary">
@@ -55,13 +62,12 @@ export function Nav({
       </a>
 
       <div className="nav__section">
-        <p className="nav__label">Workspace</p>
         <a
           className="nav__item"
           href="#/"
           aria-current={route.view === "home" ? "page" : undefined}
         >
-          Dashboard
+          Today
         </a>
         <a
           className="nav__item"
@@ -69,7 +75,6 @@ export function Nav({
           aria-current={route.view === "projects" ? "page" : undefined}
         >
           Projects
-          <span className="nav__count">{projects.length}</span>
         </a>
         <a
           className="nav__item"
@@ -77,101 +82,55 @@ export function Nav({
           aria-current={route.view === "agents" ? "page" : undefined}
         >
           Agents
-          <span className="nav__count">{bootstrap?.agents.length ?? 0}</span>
         </a>
         <a
           className="nav__item"
           href="#/runs"
           aria-current={route.view === "runs" ? "page" : undefined}
         >
-          Run history
-          <span className="nav__count">{runs.length}</span>
+          History
         </a>
+      </div>
+
+      <div className="nav__section nav__section--ruled">
+        <p className="nav__label">Needs you</p>
+        {needsYou.length === 0 ? (
+          <p className="nav__empty">Nothing needs you</p>
+        ) : (
+          needsYou.slice(0, NAV_NEEDS_YOU_LIMIT).map((run) => {
+            const project = projectNames[run.projectId] ?? run.projectId;
+            return (
+              <a
+                key={run.id}
+                className="nav__item nav__item--needs"
+                href={routeHref({ view: "run", runId: run.id })}
+                aria-current={active === run.id ? "page" : undefined}
+                title={`${project} — ${run.goal}`}
+              >
+                <span
+                  className={dotClass(toneForStatus(run.status))}
+                  aria-hidden="true"
+                />
+                <span className="nav__needs-label">{project}</span>
+              </a>
+            );
+          })
+        )}
+        {needsYou.length > NAV_NEEDS_YOU_LIMIT ? (
+          <a className="nav__more" href="#/">
+            {needsYou.length - NAV_NEEDS_YOU_LIMIT} more on Today
+          </a>
+        ) : null}
+      </div>
+
+      <div className="nav__bottom">
         <a
-          className="nav__item"
+          className="nav__item nav__item--new"
           href="#/new-run"
           aria-current={route.view === "new-run" ? "page" : undefined}
         >
-          New workflow
-          <span className="nav__dot" aria-hidden="true" />
+          <span aria-hidden="true">+</span> New workflow
         </a>
-      </div>
-
-      <div className="nav__section">
-        <p className="nav__label">
-          Open runs{" "}
-          {waiting.length > 0 ? (
-            <span style={{ color: "var(--warn)" }}>
-              · {waiting.length} need you
-            </span>
-          ) : null}
-        </p>
-        {open.length === 0 ? (
-          <p className="nav__project faint small">No open runs</p>
-        ) : (
-          open.slice(0, 8).map((run) => (
-            <a
-              key={run.id}
-              className="nav__item"
-              href={routeHref({ view: "run", runId: run.id })}
-              aria-current={active === run.id ? "page" : undefined}
-              title={run.goal}
-            >
-              <span
-                className={dotClass(toneForStatus(run.status))}
-                aria-hidden="true"
-              />
-              <span
-                style={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  maxWidth: "15ch",
-                }}
-              >
-                {run.goal}
-              </span>
-            </a>
-          ))
-        )}
-      </div>
-
-      <div className="nav__section">
-        <p className="nav__label">Projects</p>
-        {projects.length === 0 ? (
-          <p className="nav__project faint small">None registered yet</p>
-        ) : (
-          projects.map((project) => (
-            <a
-              key={project.id}
-              className="nav__project"
-              href={routeHref({ view: "projects", projectId: project.id })}
-              aria-current={projectId === project.id ? "page" : undefined}
-              title={project.canonicalRoot}
-            >
-              {project.name}
-            </a>
-          ))
-        )}
-      </div>
-
-      <div className="nav__footer">
-        <div className={classNames("row", "row--tight")}>
-          <span
-            className="nav__dot"
-            style={{
-              background:
-                connection === "live"
-                  ? "var(--ok)"
-                  : connection === "reconnecting"
-                    ? "var(--warn)"
-                    : "var(--text-2)",
-            }}
-            aria-hidden="true"
-          />
-          <span>event stream: {connection}</span>
-        </div>
-        <div>v{bootstrap?.version ?? "unavailable"}</div>
       </div>
     </nav>
   );
