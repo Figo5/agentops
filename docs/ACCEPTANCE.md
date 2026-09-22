@@ -39,6 +39,14 @@ Automated result: **206 tests passed, 0 failed**, plus **2 Chromium end-to-end t
 
 ![Local dashboard](screenshots/dashboard.png)
 
+![Full-width change review](screenshots/changes.png)
+
+## UI redesign validation
+
+The 2026-09-22 presentation redesign kept the service, persistence model and workflow engine unchanged. The current branch passed **249 automated tests**, **11 Chromium end-to-end tests**, TypeScript checks, the production build and the repository-wide formatting check. Browser coverage includes the guided workflow, final acceptance evidence, operator input, failed command, retry, review rejection, approve-with-fixes, completed run, keyboard tabs, responsive layout and readable diffs. The historical real run above remained pending and was used for read-only visual review.
+
+The screenshots above show the redesigned Today, final-review and Changes views. The earlier 206-test and two-browser-test result remains the V1 acceptance snapshot, not the current test count.
+
 ## Explicit boundaries
 
 This is a local process coordinator, not an OS sandbox. macOS/Linux only; no PTY automation or Windows tree guarantee. Interactive-only tools use manual handoff. AgentOps cannot observe tool calls a CLI does not emit. Git writes are disabled by the shipped workflow policy; dangerous writes and deployments are not implemented. Custom template editing is deferred. Logs are bounded and redacted best-effort; git checkpoints are metadata, not backups. AI CLIs use their existing provider credentials and may send context to their providers. No license has been selected.

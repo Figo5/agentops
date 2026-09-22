@@ -2,11 +2,17 @@
 
 Local-first mission control for orchestrating, reviewing and auditing AI coding agents.
 
-![AgentOps run view](docs/screenshots/run.png)
+![AgentOps run ready for final review](docs/screenshots/run.png)
 
 AgentOps turns a coding goal into an inspectable local workflow: explicit prompts, owned processes, real verification commands, structured review, preserved retries, git checkpoints and a final human decision. Run records survive a browser refresh or backend restart.
 
 V1 passes automated checks and a real DeepSeek → tests → Claude coding workflow. See [acceptance evidence and limits](docs/ACCEPTANCE.md).
+
+The Today view puts runs that need a decision first. Changes, verification, reviews and raw logs are available from the run without crowding its current state.
+
+![AgentOps Today view](docs/screenshots/dashboard.png)
+
+![AgentOps full-width change review](docs/screenshots/changes.png)
 
 ## Quick start
 
@@ -24,7 +30,7 @@ Open **http://127.0.0.1:4317**. Data stays in `~/.agentops/agentops.sqlite`. Set
 
 1. **Add a project.** Enter its absolute git repository root and verification commands as an executable plus an argument array, for example `npm` and `["test"]`.
 2. **Configure agents.** Use mock agents first, or configure installed Codex, Claude Code, Hermes/OpenCode or generic CLIs. Model names are editable; installation does not establish provider access.
-3. **Create a workflow.** Choose a template, assign roles, enter a goal and constraints, then review the frozen stage plan before starting.
+3. **Create a workflow.** Enter the project goal and constraints, choose the team and plan, confirm the policy, then review the frozen workflow before starting.
 4. **Observe and decide.** Inspect exact prompts, live output, command results, diffs and review findings. Failed attempts remain visible when retried. A completed workflow waits for your acceptance.
 
 Verification runs real local commands even when the agents are mocks. Mock agents simulate outcomes; they do not pretend to edit your repository.
