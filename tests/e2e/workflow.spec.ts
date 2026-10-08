@@ -845,15 +845,15 @@ test("technical and raw surfaces stay folded until the operator asks", async ({
       verificationCommands: [PASSING_COMMAND],
     });
     // A real CLI adapter record, so the editor has adapter plumbing to fold.
-    // (The mock agents keep their deterministic scenarios: this one is only
-    // edited, never run.)
+    // Use Node as an installed executable on every host. This record is only
+    // edited, never run; the mock agents keep their deterministic scenarios.
     app.store.createAgent({
       name: "CLI worker",
       roleHint: "implementer",
       adapterKind: "hermes-opencode",
       model: "deepseek-v4.1-flash",
       effort: "high",
-      config: { executable: "hermes", provider: "opencode-go" },
+      config: { executable: process.execPath, provider: "opencode-go" },
     });
     const run = (
       await app.engine.createRun({
