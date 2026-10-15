@@ -1,101 +1,229 @@
 # AgentOps
 
-Local-first mission control for orchestrating, reviewing and auditing AI coding agents.
+**See every agent you are running, from every provider, in one live field.**
 
-![AgentOps run ready for final review](docs/screenshots/run.png)
+AgentOps is a local-first viewer. Agents report what they are doing to a server
+on your own machine, and each one becomes a star in a constellation — lit while
+it works, joined by lines when it hands work to another, flaring when it reaches
+a verdict. Claude Code, Codex, OpenCode, a Gemini script, an OpenRouter job, a
+bash loop: anything that can make an HTTP request can appear.
 
-AgentOps turns a coding goal into an inspectable local workflow: explicit prompts, owned processes, real verification commands, structured review, preserved retries, git checkpoints and a final human decision. Run records survive a browser refresh or backend restart.
+It orchestrates nothing and launches nothing. It receives, and it draws.
 
-V1 passes automated checks and a real DeepSeek → tests → Claude coding workflow. See [acceptance evidence and limits](docs/ACCEPTANCE.md).
+```
+                    ·  researcher
+      planner ●──────────→ ● implementer
+                 ⋯⋯⋯⋯          │
+                               ↓
+                          ● reviewer   ◉ ← verdict flare
+```
 
-The Today view puts runs that need a decision first. Changes, verification, reviews and raw logs are available from the run without crowding its current state.
+**[▶ Watch a 53-second demo](docs/demo.mp4)** — six agents across four
+providers, spawning, handing off, reaching verdicts and asking for a decision.
 
-![AgentOps Today view](docs/screenshots/dashboard.png)
+> **Handing this to a coding agent?** Point it at **[AGENTS.md](AGENTS.md)**.
+> It gets the thing installed, running, verified, and reporting on its own.
 
-![AgentOps full-width change review](docs/screenshots/changes.png)
+---
 
-## Quick start
+## Quickstart
 
-Requires **Node.js 24+**, npm and Git on macOS or Linux. AI CLIs are optional: deterministic mock agents are included.
+Needs **Node 24+** (the server uses the built-in `node:sqlite`).
 
-```sh
-git clone https://github.com/Figo5/agentops.git
-cd agentops
-npm ci
+```bash
+npm install
 npm run build
 npm start
 ```
 
-Open **http://127.0.0.1:4317**. Data stays in `~/.agentops/agentops.sqlite`. Set `AGENTOPS_DATA_DIR` to use another local data directory, or `AGENTOPS_PORT` to choose another loopback port. Never expose the port through a public tunnel.
+Open <http://127.0.0.1:4317>. The field is empty until something reports.
 
-1. **Add a project.** Enter its absolute git repository root and verification commands as an executable plus an argument array, for example `npm` and `["test"]`.
-2. **Configure agents.** Use mock agents first, or configure installed Codex, Claude Code, Hermes/OpenCode or generic CLIs. Model names are editable; installation does not establish provider access.
-3. **Create a workflow.** Enter the project goal and constraints, choose the team and plan, confirm the policy, then review the frozen workflow before starting.
-4. **Observe and decide.** Inspect exact prompts, live output, command results, diffs and review findings. Failed attempts remain visible when retried. A completed workflow waits for your acceptance.
+Make yourself a star:
 
-Verification runs real local commands even when the agents are mocks. Mock agents simulate outcomes; they do not pretend to edit your repository.
-
-## Supported agents
-
-| Adapter              | Support                                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| Mock                 | Deterministic success, failure, fixes, rejection, retry, input wait and cancellation scenarios   |
-| Generic CLI          | Executable + argument array; persisted prompt on stdin; bounded stdout/stderr                    |
-| Codex CLI            | Noninteractive JSONL execution, configured model/effort, workspace or reviewer read-only sandbox |
-| Claude Code          | Streaming JSON execution, structured reviewer verdicts, configured model/effort                  |
-| Hermes / OpenCode Go | Configurable provider/model/reasoning through Hermes one-shot mode                               |
-| Manual handoff       | Copy an exact saved prompt into an interactive tool and submit its result explicitly             |
-
-The intended role setup is Astra/Codex for planning, DeepSeek/Hermes for implementation and Claude Code for review. Roles and display names are independent of adapter names. No API keys are stored by AgentOps. See [adapter configuration and boundaries](docs/ADAPTERS.md).
-
-## What is recorded
-
-Projects, agent configurations, workflow templates, frozen run plans, tasks, every execution attempt, exact prompt packets, output events, approvals, review verdicts, verification commands and results, git checkpoints, artifact references and reported usage. Search history by project, goal, agent, status, dates, branch and review verdict.
-
-Reviewer exit code zero is not approval. Reviews must return a validated `APPROVE`, `APPROVE_WITH_FIXES` or `REJECT` object. Fixes loop through another verification and review, with a bounded cycle count. Overrides and final acceptance are recorded human decisions. Unknown test counts and usage remain **UNKNOWN**.
-
-## Architecture
-
-```text
-React / Vite interface
-        │ same-origin HTTP + SSE
-Local Node.js service ── SQLite migrations + transactional audit records
-        │
-Persisted workflow engine
-        ├── Agent adapters: mock / generic / Codex / Claude / Hermes / manual
-        ├── Owned POSIX process supervisor
-        ├── Verification executor + conservative test parsing
-        └── Git snapshots, diffs and typed write policy
+```bash
+curl -s localhost:4317/ingest \
+  -H 'content-type: application/json' \
+  -d '{"actor":"me","action":"hello","status":"running"}'
 ```
 
-The orchestration engine has no React dependency. Agent adapters normalize vendor output while preserving redacted process logs. A lightweight supervisor owns each process group through cleanup. Startup marks live attempts interrupted and never silently relaunches them.
+That is the whole setup. No account, no key, no registration step — an actor
+exists the moment it reports.
 
-Read [DESIGN.md](DESIGN.md), [architecture](docs/ARCHITECTURE.md), [workflows](docs/WORKFLOWS.md) and [security](docs/SECURITY.md).
+---
 
-## Safety model
+## Point your agent at it
 
-- Loopback binding, exact Host/Origin checks and per-server action tokens; no accounts or remote-access mode.
-- Canonical project roots and artifact containment; no implicit repository reset, clean or stash.
-- Argument arrays and `shell: false`; no primary arbitrary git command box.
-- Bounded, redacted logs; inherited CLI credentials, never a credential database.
-- Read-only git policy by default. Unsupported dangerous git writes are rejected.
-- Owned process groups, timeout and bounded cancellation. Stored PIDs are never used to terminate processes.
+**Say this to your agent:**
 
-**AgentOps is not an OS sandbox.** Trusted commands, package scripts and third-party coding agents run with your account's permissions. Workflow policy governs AgentOps-issued git operations. Hermes one-shot mode bypasses Hermes's interactive approvals and requires an explicit setting. AI CLIs may send repository context to their configured providers; AgentOps itself adds no cloud backend or telemetry.
+> Read http://127.0.0.1:4317/README.md and report your session to AgentOps as
+> you work.
 
-## Development and validation
+Or paste the [Agent instructions](#agent-instructions) below into its context.
 
-```sh
-npm test
-npm run typecheck
-npm run build
-npm run test:e2e
+---
+
+## The contract
+
+`POST /ingest` with a JSON object. **Two fields are required.**
+
+```json
+{ "actor": "claude-code", "action": "tool_call" }
 ```
 
-Tests use temporary repositories, SQLite databases, deterministic agents and local child processes. They do not require paid AI calls. Browser tests require Playwright Chromium (`npx playwright install chromium`). Acceptance evidence and real dogfood results are recorded in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md).
+| Field      | Required | What it means                                                       |
+| ---------- | -------- | ------------------------------------------------------------------- |
+| `actor`    | **yes**  | Who acted. One star in the field.                                   |
+| `action`   | **yes**  | What it did. Free-form: `tool_call`, `review`, `spawn`, `reply`.    |
+| `session`  | no       | The conversation this belongs to. Groups the field and the filters. |
+| `provider` | no       | `claude`, `openai`, `google`, `opencode`, `openrouter`, …           |
+| `target`   | no       | Another actor you handed work to. **Draws a handoff edge.**         |
+| `parent`   | no       | The actor that spawned you. **Draws a spawn edge.**                 |
+| `summary`  | no       | The one line a human should read. This is what the column shows.    |
+| `status`   | no       | `running`, `ok`, `error`, `blocked`.                                |
+| `verdict`  | no       | Free-form: `approve`, `reject`, `needs-fixes`, `pass`, …            |
+| `issues`   | no       | `[{ description, severity?, path?, line? }]`                        |
+| `detail`   | no       | Anything else. Unknown top-level keys land here too.                |
 
-## V1 boundaries
+Send several at once with `{"events": [ … ]}` (up to 100).
 
-macOS/Linux local operation; no Windows process-tree guarantee, remote agents, user accounts, cloud database or arbitrary DAG editor. Pipe-compatible noninteractive CLIs are supported; terminal-only workflows use manual handoff. Usage is adapter-dependent and never estimated as measured. Git checkpoints are metadata, not repository backups; large git output fails explicitly rather than becoming a partial authoritative snapshot. Log redaction is best effort. CLI provider availability is external to AgentOps.
+**Responses**
 
-No license has been selected for this repository.
+- `202` — all accepted.
+- `207` — some accepted; the body names each rejected entry and why.
+- `400` / `413` — nothing was stored.
+
+A partial batch is never silently dropped. The body tells you exactly which
+index failed and what was wrong with it.
+
+---
+
+## What shows up where
+
+- **A star** appears for every `actor`. It is lit by recent events, and stays
+  fully lit while its latest `status` is `running`. It leaves the field 30
+  minutes after its last event.
+- **An edge** is drawn from `parent` → actor (spawn) and from actor → `target`
+  (handoff). If you send neither, consecutive actors in one `session` are joined
+  by a fainter dashed line — that one is derived from ordering, not reported, so
+  it is drawn as weaker evidence.
+- **A card** in the right-hand column appears for anything with a `verdict`, or
+  a `status` of `blocked` or `error`. It shows your `summary` line, your
+  `issues`, and your `detail`. Ordinary steps stay in the field and do not
+  clutter the column.
+- **Waiting** is marked on a blocked card until some later event in the same
+  session moves on.
+
+## Replying
+
+A card with a `session` has a **Reply** button. It posts back into the same
+session:
+
+```json
+{
+  "actor": "operator",
+  "action": "reply",
+  "session": "…",
+  "target": "…",
+  "summary": "…"
+}
+```
+
+Your agent sees it by reading its own session stream, which makes the viewer
+two-way without AgentOps ever driving your agent:
+
+```bash
+curl -N "localhost:4317/api/events?session=my-session"
+```
+
+---
+
+## Agent instructions
+
+Paste this into your agent's context or project instructions.
+
+````markdown
+You have a local AgentOps viewer at http://127.0.0.1:4317. Report your work to
+it so your human can watch what you are doing.
+
+Pick a stable `session` id for this conversation and a short `actor` name for
+yourself, then POST to `/ingest` as you go:
+
+```bash
+curl -s -m 2 localhost:4317/ingest \
+  -H 'content-type: application/json' \
+  -d '{"actor":"<you>","action":"<what>","session":"<session>","provider":"<claude|openai|google|…>","status":"running","summary":"<one line>"}'
+```
+
+Report:
+
+- when you start a task — `status: "running"`
+- when you finish one — `status: "ok"`, with a `summary`
+- when you fail — `status: "error"`, with a `summary` saying what broke
+- when you need the human — `status: "blocked"`, with a `summary` that states
+  the decision you need. This is the one that gets their attention.
+- when you spawn a subagent — the subagent sends `parent: "<you>"`
+- when you hand off — `target: "<the other actor>"`
+- when you judge something — `verdict` plus a `summary`, and `issues` if you
+  have specifics
+
+Rules:
+
+- Never block on it. Use a short timeout and ignore failures — the viewer is
+  never a dependency of your real work.
+- One event per meaningful step, not per token. Batch with
+  `{"events":[…]}` if you are chatty.
+- Never send secrets. Credentials are stripped on arrival, but do not rely on
+  that.
+- Check for human replies by reading `/api/events?session=<session>`; a reply
+  arrives as an event with `actor: "operator"` and `action: "reply"`.
+````
+
+---
+
+## Configuration
+
+| Variable            | Default       | Meaning                      |
+| ------------------- | ------------- | ---------------------------- |
+| `AGENTOPS_PORT`     | `4317`        | Port on 127.0.0.1.           |
+| `AGENTOPS_DATA_DIR` | `~/.agentops` | Where the SQLite file lives. |
+
+## Security
+
+The server binds to `127.0.0.1` only, and every request must carry a `Host` of
+this loopback port — that is what stops DNS rebinding. Cross-origin and
+cross-site requests are refused, so a web page in your browser cannot post
+events even though your own shell can.
+
+`/ingest` deliberately needs no token: any process already running as you could
+read one from `/api/bootstrap` anyway, so requiring it would buy nothing and
+cost every agent a handshake. Everything else that writes still requires it.
+
+Obvious credential shapes are stripped from strings before they are stored.
+That is storage hygiene, not a security boundary — do not send secrets.
+
+## Development
+
+```bash
+npm run dev      # server, watched
+npm run dev:ui   # vite on :5173, proxying /api and /ingest
+npm test         # node:test
+npm run check    # typecheck + test + build — the gate CI runs
+npm run format   # prettier
+```
+
+**Layout**
+
+```
+src/core/events.ts   the event model and its validation
+src/db/store.ts      one append-only SQLite table
+src/server/app.ts    ingest, SSE, static client
+src/ui/constellation.ts  stream -> stars, edges, cards  (pure)
+src/ui/components/Field.tsx  the canvas
+```
+
+Reduced motion is respected: the field renders as a still frame with arrowheads
+instead of travelling particles, and loses nothing but the movement.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

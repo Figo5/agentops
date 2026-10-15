@@ -33,7 +33,9 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      "/api": {
+      // Both of the server's surfaces: the UI reads /api, and the Reply
+      // button posts to /ingest like any other agent would.
+      "^/(api|ingest)": {
         target: apiTarget,
         changeOrigin: true,
         configure(proxy) {

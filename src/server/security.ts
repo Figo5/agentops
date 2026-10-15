@@ -19,7 +19,21 @@ export class LocalGuard {
   setPort(port: number) {
     this.port = port;
   }
-  check(req: IncomingMessage, res: ServerResponse) {
+  /**
+   * `tokenRequired: false` drops only the local action token, for `/ingest`.
+   *
+   * Every other check still applies, and they are the ones that matter here:
+   * Host must be this loopback port, a cross-origin or cross-site request is
+   * refused outright, and the body must be JSON. A web page in the operator's
+   * browser therefore still cannot post events, while any process already
+   * running as the operator — which could read the token from the bootstrap
+   * endpoint anyway — can report with a single curl and no handshake.
+   */
+  check(
+    req: IncomingMessage,
+    res: ServerResponse,
+    { tokenRequired = true }: { tokenRequired?: boolean } = {},
+  ) {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("X-Frame-Options", "DENY");
@@ -42,6 +56,9 @@ export class LocalGuard {
     )
       throw new HttpError(403, "Cross-site request rejected");
     if (!["GET", "HEAD"].includes(req.method ?? "")) {
+      if (!req.headers["content-type"]?.startsWith("application/json"))
+        throw new HttpError(415, "JSON required");
+      if (!tokenRequired) return;
       const provided = req.headers["x-agentops-token"];
       if (
         typeof provided !== "string" ||
@@ -49,8 +66,6 @@ export class LocalGuard {
         !timingSafeEqual(Buffer.from(provided), Buffer.from(this.token))
       )
         throw new HttpError(403, "Missing or invalid local action token");
-      if (!req.headers["content-type"]?.startsWith("application/json"))
-        throw new HttpError(415, "JSON required");
     }
   }
 }

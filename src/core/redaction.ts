@@ -1,5 +1,3 @@
-import { ValidationError } from "./errors.js";
-
 interface SecretPattern {
   name: string;
   regex: RegExp;
@@ -60,26 +58,6 @@ export function redactSecrets(text: string | null | undefined): string {
         : output.replace(pattern.regex, `[REDACTED:${pattern.name}]`);
   }
   return output;
-}
-
-/**
- * Reject content that obviously embeds credentials before it is accepted as
- * operator input (goal, constraints, instructions).
- */
-export function assertNoCredentials(
-  text: string | null | undefined,
-  context: string,
-): void {
-  const found = findCredentials(text);
-  if (found.length > 0) {
-    throw new ValidationError(
-      `${context} appears to embed credentials (${found.join(", ")}); supply secrets via the environment`,
-      {
-        context,
-        patterns: found,
-      },
-    );
-  }
 }
 
 /** Recursively sanitize structured evidence without corrupting its JSON syntax. */

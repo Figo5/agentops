@@ -18,5 +18,9 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  // `src/ui` is a DOM project with its own config and its own lib; this one
+  // is the Node side. Keeping them apart stops either from depending on a
+  // `lib` the other happens to pull in.
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["src/ui"]
 }

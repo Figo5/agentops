@@ -1,440 +1,347 @@
 /**
- * Application shell: hash routing, the bootstrap resource, the single SSE
- * subscription and the top-level error surfaces.
+ * The application: one screen.
  *
- * There is no alert()/confirm()/prompt() anywhere in this UI: destructive or
- * mandatory-reason actions are inline forms, and every failure renders in place.
+ * The field fills the window, the activity column reads out what agents
+ * reported, and a session strip filters both. There is no router, because there
+ * is nowhere else to go.
  *
- * The client is same-origin only: the server serves the built client, and the
- * Vite dev server proxies /api (see vite.config.ts). No configurable remote base
- * URL is accepted.
+ * There is no alert()/confirm()/prompt() anywhere in this UI, and every failure
+ * renders in place.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { createClient } from "./api.js";
+import { foldConstellation, type Card } from "./constellation.js";
+import { useAction, useBootstrap, useEventStream } from "./hooks.js";
+import { Field } from "./components/Field.js";
 import {
-  useBootstrap,
-  useDebouncedCallback,
-  useRunEvents,
-  useRunEvidence,
-} from "./hooks.js";
-import {
-  homeSummary,
-  parseRoute,
-  routeHref,
-  type Route,
-} from "./view-model.js";
-import { AgentsView } from "./components/AgentsView.js";
-import { Button, Card, ErrorBox, Loading, Notice } from "./components/Bits.js";
-import { Home } from "./components/Home.js";
-import { Nav } from "./components/Nav.js";
-import { NewRunFlow } from "./components/NewRunFlow.js";
-import { ProjectsView } from "./components/ProjectsView.js";
-import { RunsView } from "./components/RunsView.js";
-import { RunView } from "./components/RunView.js";
-import { SettingsView } from "./components/SettingsView.js";
+  Button,
+  Disclosure,
+  ErrorBox,
+  Loading,
+  Notice,
+  Pill,
+  TextArea,
+} from "./components/Bits.js";
 
-/** Fragment the skip link points at; never a route. */
-const SKIP_TARGET_HASH = "#main-content";
+function relative(iso: string, now: number): string {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return "";
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return new Date(at).toLocaleDateString();
+}
 
-/**
- * The element that actually scrolls this document. `document.scrollingElement`
- * is the standards-mode scroller (the window scroll position is its scrollTop),
- * so read/write go through it instead of assuming `window.scrollY`.
- */
-function scroller(): HTMLElement | null {
+function CardView({
+  card,
+  now,
+  onReply,
+}: {
+  card: Card;
+  now: number;
+  onReply: (card: Card, text: string) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    const sent = await onReply(card, text);
+    setBusy(false);
+    if (sent) {
+      setText("");
+      setOpen(false);
+    } else setError("The reply was not accepted. Nothing was sent.");
+  };
+
   return (
-    (document.scrollingElement as HTMLElement | null) ??
-    document.documentElement ??
-    null
+    <li
+      className={`card-row card-row--${card.tone}${
+        card.awaitingYou ? " card-row--blocking" : ""
+      }`}
+    >
+      <div className="card-row__head">
+        <span className="card-row__actor">{card.actor}</span>
+        {card.verdict ? (
+          <Pill
+            tone={
+              card.tone === "neutral"
+                ? "info"
+                : card.tone === "success"
+                  ? "success"
+                  : card.tone
+            }
+          >
+            {card.verdict}
+          </Pill>
+        ) : null}
+        {card.awaitingYou ? <Pill tone="warn">Waiting</Pill> : null}
+        <span className="faint small card-row__time">
+          {relative(card.createdAt, now)}
+        </span>
+      </div>
+
+      {card.summary ? (
+        <p className="card-row__summary">{card.summary}</p>
+      ) : (
+        <p className="card-row__summary faint">
+          {card.action} — no summary reported
+        </p>
+      )}
+
+      <p className="faint small wrap-anywhere">
+        {card.action}
+        {card.provider ? ` · ${card.provider}` : ""}
+        {card.session ? ` · ${card.session}` : ""}
+        {card.issues.length > 0
+          ? ` · ${card.issues.length} finding${card.issues.length === 1 ? "" : "s"}`
+          : ""}
+      </p>
+
+      {card.issues.length > 0 ? (
+        <Disclosure summary={`Findings (${card.issues.length})`}>
+          <ul className="findings">
+            {card.issues.map((issue, index) => (
+              <li key={`${card.id}-${index}`} className="small wrap-anywhere">
+                {issue.severity ? <b>{issue.severity}</b> : null}
+                {issue.path
+                  ? ` · ${issue.path}${issue.line ? `:${issue.line}` : ""}`
+                  : ""}
+                {issue.severity || issue.path ? " — " : ""}
+                {issue.description}
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
+      ) : null}
+
+      {Object.keys(card.detail).length > 0 ? (
+        <Disclosure summary="Detail">
+          <pre className="detail">{JSON.stringify(card.detail, null, 2)}</pre>
+        </Disclosure>
+      ) : null}
+
+      {card.session ? (
+        open ? (
+          <div className="stack--tight">
+            <TextArea
+              value={text}
+              onChange={setText}
+              rows={3}
+              ariaLabel={`Reply to ${card.actor}`}
+              placeholder="Your agent sees this on the session stream."
+            />
+            <div className="row">
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy || text.trim().length === 0}
+                onClick={() => void submit()}
+              >
+                Send reply
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+            {error ? <ErrorBox error={error} /> : null}
+          </div>
+        ) : (
+          <div className="row">
+            <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+              Reply
+            </Button>
+          </div>
+        )
+      ) : null}
+    </li>
   );
-}
-
-function readScrollTop(): number {
-  const element = scroller();
-  if (element) return element.scrollTop;
-  return typeof window.scrollY === "number" ? window.scrollY : 0;
-}
-
-function writeScrollTop(top: number): void {
-  const element = scroller();
-  if (element) {
-    element.scrollTop = top;
-    return;
-  }
-  if (typeof window.scrollTo === "function")
-    window.scrollTo({ top, behavior: "auto" });
 }
 
 export function App() {
   const client = useMemo(() => createClient({ baseUrl: "" }), []);
-  const [route, setRoute] = useState<Route>(() =>
-    parseRoute(window.location.hash),
-  );
   const bootstrap = useBootstrap(client);
-  const [streamVersion, setStreamVersion] = useState(0);
-  const mainRef = useRef<HTMLElement | null>(null);
-  /** Scroll position per route, so going back restores where the operator was. */
-  const scrollMemory = useRef(new Map<string, number>());
-  /** Scroll target for the navigation currently being applied. */
-  const pendingScroll = useRef<number | undefined>(undefined);
-  const routeKeyRef = useRef(routeHref(route));
-  const firstRender = useRef(true);
+  const [session, setSession] = useState<string | null>(null);
+  const [actor, setActor] = useState<string | null>(null);
+  const reply = useAction(client);
 
-  useEffect(() => {
-    // The app owns scroll behaviour: browser-side restoration would fight the
-    // per-route positions kept below.
-    if ("scrollRestoration" in window.history)
-      window.history.scrollRestoration = "manual";
-    // Every entry this app creates is stamped with a monotonic index. A hash
-    // change whose entry already carries an older index came from the browser's
-    // history (back/forward); a fresh entry (no index) is a new navigation.
-    // `popstate` is not used as the signal: Chromium also fires it for a plain
-    // hash assignment, which would misclassify forward navigations as traversal.
-    const stamp = (index: number) => {
-      window.history.replaceState(
-        { ...(window.history.state ?? {}), agentopsIndex: index },
-        "",
-      );
-    };
-    const stateIndex = (): number | null => {
-      const raw = (window.history.state as { agentopsIndex?: unknown } | null)
-        ?.agentopsIndex;
-      return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-    };
-    const currentIndex = stateIndex();
-    if (currentIndex === null) stamp(0);
-    const indexRef = { current: currentIndex ?? 0 };
-    const onHashChange = () => {
-      // The skip link's fragment is not a route: never let it navigate away.
-      if (window.location.hash === SKIP_TARGET_HASH) return;
-      const next = parseRoute(window.location.hash);
-      const previousKey = routeKeyRef.current;
-      const nextKey = routeHref(next);
-      if (previousKey === nextKey) return;
-      const index = stateIndex();
-      const traversal = index !== null && index !== indexRef.current;
-      if (index === null) {
-        indexRef.current += 1;
-        stamp(indexRef.current);
-      } else {
-        indexRef.current = index;
-      }
-      const restore = traversal ? scrollMemory.current.get(nextKey) : undefined;
-      scrollMemory.current.set(previousKey, readScrollTop());
-      pendingScroll.current = restore;
-      setRoute(next);
-    };
-    window.addEventListener("hashchange", onHashChange);
-    return () => {
-      window.removeEventListener("hashchange", onHashChange);
-    };
-  }, []);
-
-  /**
-   * Skip link: move focus to the main landmark instead of letting the browser
-   * follow the fragment, which the hash router would otherwise read as a route
-   * change (and render the dashboard over the current view).
-   */
-  const focusMainContent = useCallback(() => {
-    mainRef.current?.focus({ preventScroll: true });
-    writeScrollTop(0);
-  }, []);
-
-  // Route focus and scroll: a new view starts at the top with focus on <main>;
-  // a history traversal restores the position the operator left. The target is
-  // re-applied a few times because a view that fetches on mount is shorter than
-  // its final height, which would otherwise clamp the restore to the top.
-  useEffect(() => {
-    const key = routeHref(route);
-    routeKeyRef.current = key;
-    if (firstRender.current) {
-      firstRender.current = false;
-      pendingScroll.current = undefined;
-      return;
-    }
-    const target = pendingScroll.current;
-    pendingScroll.current = undefined;
-    mainRef.current?.focus({ preventScroll: true });
-    if (typeof window.scrollTo !== "function") return;
-    // The browser also restores the session-history entry's own offset shortly
-    // after a hash navigation, which lands *after* the first write here. Keep
-    // correcting until the position is stable, bounded to ~700 ms so the
-    // operator's own scrolling is never fought for long.
-    const desired = target ?? 0;
-    let cancelled = false;
-    let attempts = 0;
-    let stable = 0;
-    const timers: number[] = [];
-    const apply = () => {
-      if (cancelled) return;
-      if (Math.abs(readScrollTop() - desired) <= 2) {
-        stable += 1;
-        if (stable >= 2) return;
-      } else {
-        stable = 0;
-        writeScrollTop(desired);
-      }
-      attempts += 1;
-      if (attempts < 6) timers.push(window.setTimeout(apply, 120));
-    };
-    apply();
-    return () => {
-      cancelled = true;
-      for (const timer of timers) window.clearTimeout(timer);
-    };
-  }, [route]);
-
-  const runId = route.view === "run" ? route.runId : null;
-
-  // One subscription for the whole app; `afterId: 0` replays persisted history and
-  // mergeEvents() deduplicates by event id, so reconnects cannot double-count.
-  const stream = useRunEvents({
+  // One subscription for the whole app. The bootstrap window seeds it, so the
+  // field is populated before the first live event arrives.
+  const stream = useEventStream({
     client,
-    runId,
-    afterId: 0,
-    enabled: Boolean(runId) && Boolean(bootstrap.data),
+    session: null,
+    enabled: Boolean(bootstrap.data),
+    seed: bootstrap.data?.events,
   });
 
-  const onStreamEvent = useDebouncedCallback(() => {
-    setStreamVersion((current) => current + 1);
-    void bootstrap.reload();
-  }, 500);
-
-  /**
-   * Bounded evidence for the dashboard rows that need the operator: at most a
-   * few detail requests, issued by the same client that served the bootstrap.
-   * The hook is called before the early returns below so hook order is stable.
-   */
-  const needsYouIds = useMemo(
+  const now = Date.now();
+  const state = useMemo(
     () =>
-      bootstrap.data
-        ? homeSummary(bootstrap.data.runs).needsYou.map((run) => run.id)
-        : [],
-    [bootstrap.data],
+      foldConstellation({ events: stream.events, session, now: Date.now() }),
+    [stream.events, session],
   );
-  const runEvidence = useRunEvidence(client, needsYouIds);
 
-  useEffect(() => {
-    if (stream.events.length === 0) return;
-    onStreamEvent();
-  }, [stream.events.at(-1)?.id, onStreamEvent]);
+  const onReply = useCallback(
+    async (card: Card, text: string) => {
+      const result = await reply.run((api) =>
+        api.send({
+          actor: "operator",
+          action: "reply",
+          session: card.session,
+          target: card.actor,
+          summary: text,
+          status: "ok",
+        }),
+      );
+      return Boolean(result && result.accepted === 1);
+    },
+    [reply],
+  );
 
-  const refreshBootstrap = useCallback(async () => {
-    await bootstrap.reload();
-  }, [bootstrap]);
+  const visibleCards = actor
+    ? state.cards.filter((card) => card.actor === actor)
+    : state.cards;
+  const waiting = state.cards.filter((card) => card.awaitingYou).length;
 
-  if (bootstrap.loading && !bootstrap.data) {
+  if (bootstrap.loading && !bootstrap.data)
     return (
-      <div className="app">
-        <a
-          className="skip-link"
-          href="#main-content"
-          onClick={(event) => {
-            // Keep the fragment for the accessible name, but never let it
-            // become a hash route.
-            event.preventDefault();
-            focusMainContent();
-          }}
-        >
-          Skip to main content
-        </a>
-        <Nav bootstrap={null} route={route} />
-        <main className="content" id="main-content" tabIndex={-1} ref={mainRef}>
-          <div className="view">
-            <Loading label="Loading bootstrap from the local AgentOps server…" />
-          </div>
-        </main>
+      <div className="app app--empty">
+        <Loading label="Connecting to the local server…" />
       </div>
     );
-  }
 
-  if (!bootstrap.data) {
+  if (!bootstrap.data)
     return (
-      <div className="app">
-        <a
-          className="skip-link"
-          href="#main-content"
-          onClick={(event) => {
-            // Keep the fragment for the accessible name, but never let it
-            // become a hash route.
-            event.preventDefault();
-            focusMainContent();
-          }}
-        >
-          Skip to main content
-        </a>
-        <Nav bootstrap={null} route={route} />
-        <main className="content" id="main-content" tabIndex={-1} ref={mainRef}>
-          <div className="view">
-            <Card title="Cannot reach the AgentOps server">
-              <div className="stack">
-                <ErrorBox
-                  error={bootstrap.error}
-                  onRetry={() => void bootstrap.reload()}
-                />
-                <p className="faint small">
-                  The client talks only to the local server that served it (
-                  {"same-origin"}). Start the AgentOps server, then retry. No
-                  data is displayed until the bootstrap request succeeds.
-                </p>
-                <div>
-                  <Button onClick={() => void bootstrap.reload()}>
-                    Retry bootstrap
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          </div>
-        </main>
+      <div className="app app--empty">
+        <div className="stack" style={{ maxWidth: 560 }}>
+          <h1>Cannot reach the server</h1>
+          <ErrorBox
+            error={bootstrap.error}
+            onRetry={() => void bootstrap.reload()}
+          />
+          <p className="faint small">
+            This page talks only to the server that served it. Start it with{" "}
+            <code>npm start</code>, then retry.
+          </p>
+        </div>
       </div>
     );
-  }
 
-  const data = bootstrap.data;
+  const empty = state.stars.length === 0;
 
   return (
     <div className="app">
-      <a
-        className="skip-link"
-        href="#main-content"
-        onClick={(event) => {
-          // Keep the fragment for the accessible name, but never let it become
-          // a hash route.
-          event.preventDefault();
-          focusMainContent();
-        }}
-      >
-        Skip to main content
-      </a>
-      <Nav bootstrap={data} route={route} />
-      <main className="content" id="main-content" tabIndex={-1} ref={mainRef}>
-        {/*
-          The operational home owns its own heading — the 30px greeting — so the
-          top bar is not rendered there: no second page title, and the sidebar
-          already carries History and New workflow. Every other view states its
-          name in the bar.
-        */}
-        {route.view === "home" ? null : (
-          <header className="topbar">
-            <div className="topbar__title">
-              {route.view === "run" ? (
-                /* The run view owns the page heading: the goal is the 30px h1. */
-                <span className="topbar__crumb">{titleFor(route)}</span>
-              ) : (
-                <h1>{titleFor(route)}</h1>
-              )}
-              <span className="topbar__goal">{subtitleFor(route)}</span>
-            </div>
-            <div className="topbar__spacer" />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => (window.location.hash = "#/runs")}
-            >
-              History
-            </Button>
-            <Button
-              size="sm"
-              /* On a run page the task at hand is that run: starting a new
-                 workflow is quiet navigation, not the primary action. */
-              variant={route.view === "run" ? "ghost" : "primary"}
+      <header className="bar">
+        <span className="brand">
+          AGENT<span>OPS</span>
+        </span>
+        <span className="bar__stat">
+          {state.stars.length} agent{state.stars.length === 1 ? "" : "s"}
+          {state.liveActors > 0 ? ` · ${state.liveActors} working` : ""}
+          {waiting > 0 ? ` · ${waiting} waiting on you` : ""}
+        </span>
+        <span className="bar__spacer" />
+        <span className={`bar__stream bar__stream--${stream.status}`}>
+          {stream.status === "live"
+            ? "live"
+            : stream.status === "unsupported"
+              ? "no EventSource in this browser"
+              : stream.status}
+        </span>
+      </header>
+
+      {state.sessions.length > 0 ? (
+        <div className="sessions" role="group" aria-label="Sessions">
+          <button
+            type="button"
+            className={`chip${session === null ? " chip--on" : ""}`}
+            onClick={() => setSession(null)}
+          >
+            All sessions
+          </button>
+          {state.sessions.map((item) => (
+            <button
+              type="button"
+              key={item.session}
+              className={`chip${session === item.session ? " chip--on" : ""}${
+                item.live ? " chip--live" : ""
+              }`}
               onClick={() =>
-                (window.location.hash = routeHref({
-                  view: "new-run",
-                  projectId: null,
-                }))
+                setSession(session === item.session ? null : item.session)
               }
+              title={`${item.actors} agents · ${item.events} events${
+                item.providers.length > 0
+                  ? ` · ${item.providers.join(", ")}`
+                  : ""
+              }`}
             >
-              New workflow
-            </Button>
-          </header>
-        )}
+              {item.session}
+              <span className="chip__count">{item.actors}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
-        {bootstrap.error ? (
-          <div className="view" style={{ paddingBottom: 0 }}>
-            <Notice
-              tone="warn"
-              title="The last bootstrap refresh failed; showing the last successful payload."
-            >
-              {bootstrap.error}
-            </Notice>
+      <main className="stage">
+        <div className="field">
+          <Field
+            events={stream.events}
+            session={session}
+            onSelectActor={setActor}
+          />
+          {empty ? (
+            <div className="field__empty">
+              <h2>Nothing is reporting yet</h2>
+              <p className="faint">
+                Point an agent at this server and it appears here. One event is
+                enough:
+              </p>
+              <pre className="detail">{`curl -s localhost:4317/ingest \\
+  -H 'content-type: application/json' \\
+  -d '{"actor":"my-agent","action":"hello","status":"running"}'`}</pre>
+              <p className="faint small">
+                The README is written for an agent: tell yours to read it and
+                wire itself up.
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        <aside className="column" aria-label="Activity">
+          <div className="column__head">
+            <h2>{actor ? actor : "Activity"}</h2>
+            {actor ? (
+              <Button size="sm" variant="ghost" onClick={() => setActor(null)}>
+                Clear
+              </Button>
+            ) : null}
           </div>
-        ) : null}
-
-        {route.view === "home" ? (
-          <Home bootstrap={data} evidence={runEvidence} />
-        ) : null}
-        {route.view === "projects" ? (
-          <ProjectsView
-            client={client}
-            bootstrap={data}
-            selectedId={route.projectId}
-            refreshBootstrap={refreshBootstrap}
-          />
-        ) : null}
-        {route.view === "agents" ? (
-          <AgentsView
-            client={client}
-            bootstrap={data}
-            refreshBootstrap={refreshBootstrap}
-          />
-        ) : null}
-        {route.view === "runs" ? (
-          <RunsView client={client} bootstrap={data} />
-        ) : null}
-        {route.view === "new-run" ? (
-          <NewRunFlow
-            client={client}
-            bootstrap={data}
-            initialProjectId={route.projectId}
-            refreshBootstrap={refreshBootstrap}
-          />
-        ) : null}
-        {route.view === "run" ? (
-          <RunView
-            client={client}
-            bootstrap={data}
-            runId={route.runId}
-            refreshBootstrap={refreshBootstrap}
-            streamEvents={stream.events}
-            streamStatus={stream.status}
-            streamVersion={streamVersion}
-          />
-        ) : null}
-        {route.view === "settings" ? (
-          <SettingsView bootstrap={data} error={bootstrap.error} />
-        ) : null}
+          {reply.notice ? <Notice tone="success">{reply.notice}</Notice> : null}
+          {visibleCards.length === 0 ? (
+            <p className="faint small">
+              Verdicts, blockers and errors land here. Anything an agent sends
+              with a <code>verdict</code>, or a <code>status</code> of{" "}
+              <code>blocked</code> or <code>error</code>, shows up with its
+              summary line.
+            </p>
+          ) : (
+            <ul className="card-list">
+              {visibleCards.map((card) => (
+                <CardView
+                  key={card.id}
+                  card={card}
+                  now={now}
+                  onReply={onReply}
+                />
+              ))}
+            </ul>
+          )}
+        </aside>
       </main>
     </div>
   );
-}
-
-function titleFor(route: Route): string {
-  switch (route.view) {
-    case "home":
-      /* Not rendered: the home view owns its 30px greeting. */
-      return "Today";
-    case "projects":
-      return "Projects";
-    case "agents":
-      return "Agents";
-    case "runs":
-      return "Run history";
-    case "run":
-      return "Run";
-    case "new-run":
-      return "New workflow";
-    case "settings":
-      return "Settings";
-    default:
-      return "AgentOps";
-  }
-}
-
-function subtitleFor(route: Route): string {
-  if (route.view === "settings")
-    return "display preferences and the local service";
-  /* A run's own screen shows its project, goal and state: never a raw id here. */
-  if (route.view === "run") return "";
-  return "";
 }
