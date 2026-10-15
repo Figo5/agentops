@@ -17,7 +17,6 @@ import {
   Button,
   Disclosure,
   ErrorBox,
-  Loading,
   Notice,
   Pill,
   TextArea,
@@ -207,14 +206,10 @@ export function App() {
     : state.cards;
   const waiting = state.cards.filter((card) => card.awaitingYou).length;
 
-  if (bootstrap.loading && !bootstrap.data)
-    return (
-      <div className="app app--empty">
-        <Loading label="Connecting to the local server…" />
-      </div>
-    );
-
-  if (!bootstrap.data)
+  // Render the shell immediately, from whatever has arrived: a slow or stalled
+  // bootstrap must never wall the whole page behind a spinner. Only a bootstrap
+  // that has finished *without* data is a failure worth its own screen.
+  if (!bootstrap.data && !bootstrap.loading)
     return (
       <div className="app app--empty">
         <div className="stack" style={{ maxWidth: 560 }}>
@@ -246,11 +241,13 @@ export function App() {
         </span>
         <span className="bar__spacer" />
         <span className={`bar__stream bar__stream--${stream.status}`}>
-          {stream.status === "live"
-            ? "live"
-            : stream.status === "unsupported"
-              ? "no EventSource in this browser"
-              : stream.status}
+          {bootstrap.loading
+            ? "connecting"
+            : stream.status === "live"
+              ? "live"
+              : stream.status === "unsupported"
+                ? "no EventSource in this browser"
+                : stream.status}
         </span>
       </header>
 

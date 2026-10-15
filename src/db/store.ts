@@ -78,25 +78,38 @@ export class Store {
     this.db = new DatabaseSync(options.path ?? ":memory:");
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA foreign_keys = ON");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT NOT NULL,
-        actor TEXT NOT NULL,
-        action TEXT NOT NULL,
-        session TEXT,
-        provider TEXT,
-        target TEXT,
-        parent TEXT,
-        summary TEXT,
-        status TEXT,
-        verdict TEXT,
-        issues TEXT NOT NULL DEFAULT '[]',
-        detail TEXT NOT NULL DEFAULT '{}'
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          created_at TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL,
+          session TEXT,
+          provider TEXT,
+          target TEXT,
+          parent TEXT,
+          summary TEXT,
+          status TEXT,
+          verdict TEXT,
+          issues TEXT NOT NULL DEFAULT '[]',
+          detail TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS events_session_idx ON events (session, id);
+        CREATE INDEX IF NOT EXISTS events_actor_idx ON events (actor, id);
+      `);
+    } catch (cause) {
+      // A database written by an older AgentOps has an `events` table without
+      // these columns, so `CREATE TABLE IF NOT EXISTS` finds one and the index
+      // then fails. Say what to do instead of surfacing a bare SQL error.
+      const where = options.path ?? ":memory:";
+      throw new Error(
+        `Could not initialise the events table in ${where}. If this database ` +
+          `was written by an older AgentOps, move it aside (or set ` +
+          `AGENTOPS_DATA_DIR to a new directory) and start again. Underlying ` +
+          `error: ${cause instanceof Error ? cause.message : String(cause)}`,
       );
-      CREATE INDEX IF NOT EXISTS events_session_idx ON events (session, id);
-      CREATE INDEX IF NOT EXISTS events_actor_idx ON events (actor, id);
-    `);
+    }
   }
 
   append(event: IngestedEvent): EventRecord {

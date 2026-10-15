@@ -200,11 +200,13 @@ export function createApp(options: AppOptions = {}) {
         ? resolved
         : path.join(CLIENT_ROOT, "index.html");
       let file: Buffer;
+      let served = safe;
       try {
         file = await readFile(safe);
       } catch {
         try {
-          file = await readFile(path.join(CLIENT_ROOT, "index.html"));
+          served = path.join(CLIENT_ROOT, "index.html");
+          file = await readFile(served);
         } catch {
           throw new HttpError(
             503,
@@ -212,9 +214,15 @@ export function createApp(options: AppOptions = {}) {
           );
         }
       }
+      // Vite writes content-hashed filenames under /assets, so those are safe
+      // to cache forever. index.html must not be: a cached copy names a build
+      // whose assets are gone, and the page then loads nothing. The guard's
+      // default for everything else is `no-store`.
+      if (served.startsWith(path.resolve(CLIENT_ROOT, "assets") + path.sep))
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
       res.writeHead(200, {
         "Content-Type":
-          CONTENT_TYPES[path.extname(safe)] ?? "application/octet-stream",
+          CONTENT_TYPES[path.extname(served)] ?? "application/octet-stream",
         "Content-Length": file.byteLength,
       });
       res.end(file);
