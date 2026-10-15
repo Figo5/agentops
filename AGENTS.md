@@ -1,28 +1,44 @@
 # Setting up AgentOps
 
-You are a coding agent and someone has handed you this repository. This file is
-everything you need to get it running and to report into it. Follow it in order.
+You are a coding agent and someone asked you to set this up. This file is
+everything you need. Work through it in order; each step says what success looks
+like, so you can tell whether it worked rather than guessing.
 
-## 1. Requirements
+AgentOps is a viewer that runs on this machine. Agents post what they are doing
+to it over HTTP and appear as stars in a live field. It orchestrates nothing and
+launches nothing, so setting it up cannot affect anything else you are running.
 
-- Node.js **24 or newer** (`node --version`). The server uses the built-in
-  `node:sqlite`, which does not exist on older releases.
-- npm, and a POSIX shell. macOS or Linux.
-
-Nothing else. There is no database to provision, no API key, no account, and no
-network call at any point.
-
-## 2. Install and run
+## 1. Check the requirements
 
 ```bash
-npm install
-npm run build     # builds the browser client into dist/ui
-npm start         # serves http://127.0.0.1:4317
+node --version
 ```
 
-`npm start` must print a line containing `http://127.0.0.1:4317`. If it exits
-instead, read the error — the two likely causes are a Node version below 24 and
-port 4317 already being in use (set `AGENTOPS_PORT` to something else).
+Must be **v24 or newer**. The server uses the built-in `node:sqlite`, which
+older releases do not have — if this prints v22 or lower, stop and tell the
+human they need to upgrade Node. You also need `git` and `npm`, on macOS or
+Linux.
+
+There is nothing else to obtain: no account, no API key, no database, no network
+call at any point after install.
+
+## 2. Install and start
+
+```bash
+git clone https://github.com/Figo5/agentops.git
+cd agentops
+npm install
+npm run build
+npm start
+```
+
+**Success:** `npm start` prints a line containing `http://127.0.0.1:4317` and
+stays running. It is a server — it does not exit, so start it in the background
+or in its own terminal.
+
+If it exits instead, read the error. The two likely causes are a Node version
+below 24, and port 4317 already in use — in which case start it as
+`AGENTOPS_PORT=4318 npm start` and use that port everywhere below.
 
 ## 3. Verify it works
 
@@ -32,18 +48,30 @@ curl -s localhost:4317/ingest \
   -d '{"actor":"setup-check","action":"verify","status":"ok","summary":"Install verified"}'
 ```
 
-A healthy server answers `{"accepted":1,...}` with status `202`. Open
-<http://127.0.0.1:4317> and a star labelled `setup-check` is on the field.
+**Success:** `{"accepted":1,"rejected":[],"latestId":1}`.
 
-If you cannot open a browser, this is an equivalent check:
+- `415` means you left off the `content-type: application/json` header. It is
+  required.
+- Connection refused means the server is not running — go back to step 2.
+
+Now confirm it is stored:
 
 ```bash
 curl -s localhost:4317/api/bootstrap | head -c 200
 ```
 
-It returns JSON containing your event.
+**Success:** JSON containing `"actor":"setup-check"`.
 
-## 4. Report your own work into it
+If you can open a browser, <http://127.0.0.1:4317> shows a star labelled
+`setup-check`. If you cannot, the two curls above are a complete verification —
+do not report failure merely because you could not look at it.
+
+## 4. Tell the human it is ready
+
+Say that AgentOps is running at <http://127.0.0.1:4317>, that they should open
+it, and that any agent can now report into it. If you changed the port, say so.
+
+## 5. Report your own work into it
 
 Pick a stable `session` id for the conversation you are in, and a short `actor`
 name for yourself. Then post as you work:
@@ -54,19 +82,31 @@ curl -s -m 2 localhost:4317/ingest \
   -d '{"actor":"<you>","action":"<what>","session":"<session>","provider":"<claude|openai|google|opencode|openrouter>","status":"running","summary":"<one line>"}'
 ```
 
-Report when you **start** a task (`status: "running"`), when you **finish** one
-(`"ok"` plus a `summary`), when you **fail** (`"error"`), and — most importantly
-— when you **need the human** (`"blocked"`, with a `summary` stating the
-decision you need). Blocked is the one that gets their attention.
+Report:
 
-Add `parent: "<actor>"` when you are a subagent, `target: "<actor>"` when you
-hand work off, and `verdict` plus `issues` when you judge something.
+| When                   | Send                                                             |
+| ---------------------- | ---------------------------------------------------------------- |
+| You start a task       | `status: "running"` with a `summary`                             |
+| You finish one         | `status: "ok"` with a `summary`                                  |
+| You fail               | `status: "error"` with a `summary` saying what broke             |
+| **You need the human** | `status: "blocked"` with a `summary` stating the decision needed |
+| You are a subagent     | `parent: "<the actor that spawned you>"`                         |
+| You hand work off      | `target: "<the other actor>"`                                    |
+| You judge something    | `verdict` plus a `summary`, and `issues` if you have specifics   |
 
-**Rules:** never block on it (short timeout, ignore failures — it is never a
-dependency of your real work), one event per meaningful step rather than per
-token, and never send secrets.
+`blocked` is the one that gets their attention — the card is marked **Waiting**
+until something later in that session reports a status.
 
-Read human replies back from your own session:
+**Rules**
+
+- **Never block on it.** Short timeout, ignore failures. The viewer is never a
+  dependency of your real work, and a human watching is not worth a stall.
+- One event per meaningful step, not per token. Batch up to 100 with
+  `{"events":[…]}` if you are chatty.
+- Never send secrets. Credentials are stripped on arrival, but do not rely on
+  that.
+
+Read replies from the human on your own session:
 
 ```bash
 curl -N "localhost:4317/api/events?session=<session>"
@@ -74,7 +114,15 @@ curl -N "localhost:4317/api/events?session=<session>"
 
 A reply arrives as an event with `actor: "operator"` and `action: "reply"`.
 
-## 5. Working on the code
+[README.md](README.md) has the full contract: every field, every limit, every
+response code. The running server serves it at
+<http://127.0.0.1:4317/README.md>.
+
+---
+
+## Working on this codebase
+
+Only relevant if you were asked to change AgentOps itself.
 
 ```bash
 npm run dev       # server, watched
@@ -84,7 +132,8 @@ npm run check     # typecheck + test + build — run this before you commit
 npm run format    # prettier
 ```
 
-`npm run check` is the gate. CI runs exactly it, plus `npm run format:check`.
+`npm run check` plus `npm run format:check` is exactly what CI runs. If both
+pass locally, CI passes.
 
 **Where things are**
 
@@ -101,17 +150,16 @@ npm run format    # prettier
 **Conventions that matter here**
 
 - `src/ui/constellation.ts` is pure and stays that way — no React, no DOM, no
-  network. It is how the whole picture is testable in Node.
-- Never invent data the stream did not report. An absent field renders as an
-  absence. Derived relationships are labelled as derived (see the `sequence`
-  edge kind).
+  network. That is how the whole picture is tested in Node without a browser.
+  Put rendering in `Field.tsx` and decisions in `constellation.ts`.
+- **Never invent data the stream did not report.** An absent field renders as an
+  absence, not a default. Anything derived rather than reported is labelled as
+  such — see the `sequence` edge kind, which exists precisely so a guessed
+  relationship can be drawn as weaker than a stated one.
+- The chrome is greyscale, so no state may depend on hue: every tone is also a
+  glyph and a border treatment. The field is the one coloured surface and keeps
+  its own palette in `Field.tsx`, deliberately separate from the CSS tokens.
 - The root `tsconfig.json` is the Node side and excludes `src/ui`, which is a
-  DOM project with its own config. Keep them separate.
-- There is no `alert()`/`confirm()`/`prompt()` in this UI, and errors render in
-  place.
-
-## 6. The full reference
-
-[README.md](README.md) documents every field of the ingest contract, what each
-one draws on screen, the response codes, and the security model. The running
-server also serves it at <http://127.0.0.1:4317/README.md>.
+  DOM project with its own config. Keep them separate — they have different
+  `lib` settings for a reason.
+- No `alert()`, `confirm()` or `prompt()` in the UI. Errors render in place.

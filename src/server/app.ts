@@ -93,6 +93,12 @@ export function createApp(options: AppOptions = {}) {
         if (accepted.length > 0) broadcast();
         // A partially valid batch is reported, never silently dropped: the
         // sender is told exactly which entries failed and why.
+        //
+        // Nothing accepted is a failure status, not a 2xx. A sender that only
+        // checks `response.ok` — which is most of them — must not read "every
+        // one of your events was rejected" as success.
+        const status =
+          rejected.length === 0 ? 202 : accepted.length === 0 ? 400 : 207;
         return json(
           res,
           {
@@ -100,7 +106,7 @@ export function createApp(options: AppOptions = {}) {
             rejected,
             latestId: store.latestId(),
           },
-          rejected.length === 0 ? 202 : 207,
+          status,
         );
       }
 

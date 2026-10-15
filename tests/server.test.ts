@@ -74,6 +74,27 @@ test("a batch is accepted, and a partial batch reports exactly what failed", asy
   });
 });
 
+test("a wholly invalid request is a failure status, not a 2xx", async () => {
+  await withServer(async (base, app) => {
+    // A sender that only checks `response.ok` must not read "all of your
+    // events were rejected" as success.
+    const single = await post(base, { action: "no actor" });
+    assert.equal(single.status, 400);
+    const body = (await single.json()) as {
+      accepted: number;
+      rejected: { errors: string[] }[];
+    };
+    assert.equal(body.accepted, 0);
+    assert.ok(body.rejected[0]!.errors.some((e) => e.includes("actor")));
+
+    const allBad = await post(base, {
+      events: [{ action: "x" }, { action: "y" }],
+    });
+    assert.equal(allBad.status, 400);
+    assert.equal(app.store.count(), 0);
+  });
+});
+
 test("an empty or oversized batch is refused", async () => {
   await withServer(async (base, app) => {
     assert.equal((await post(base, { events: [] })).status, 400);
