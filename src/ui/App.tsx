@@ -168,12 +168,12 @@ export function App() {
   const [actor, setActor] = useState<string | null>(null);
   const reply = useAction(client);
 
-  // One subscription for the whole app. The bootstrap window seeds it, so the
-  // field is populated before the first live event arrives.
+  // Subscribe immediately: the live stream must not wait on the (sometimes slow)
+  // bootstrap fetch. Bootstrap only supplies the token and the seed window.
   const stream = useEventStream({
     client,
     session: null,
-    enabled: Boolean(bootstrap.data),
+    enabled: true,
     seed: bootstrap.data?.events,
   });
 

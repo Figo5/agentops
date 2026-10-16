@@ -289,9 +289,19 @@ export function foldConstellation(
     edgeMap.set(key, { from, to, kind, weight, session });
   };
 
+  // A running actor stays on the field however long it runs; everything else
+  // ages out of the retention window. Without this, a long-running agent that
+  // has not posted recently vanishes from the field entirely.
+  const latestStatus = new Map<string, string | null>();
+  for (const event of events) latestStatus.set(event.actor, event.status ?? null);
+
   for (const event of events) {
     const at = timeOf(event);
-    if (now - at > STAR_RETENTION_MS) continue;
+    if (
+      now - at > STAR_RETENTION_MS &&
+      latestStatus.get(event.actor) !== "running"
+    )
+      continue;
 
     const existing = actors.get(event.actor);
     const state: ActorState = existing ?? {
