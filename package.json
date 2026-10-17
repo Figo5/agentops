@@ -8,6 +8,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "demo": "node scripts/demo.mjs",
     "start": "node --import tsx src/server/index.ts",
     "dev": "node --import tsx --watch src/server/index.ts",
     "dev:ui": "vite",
@@ -16,8 +17,8 @@
     "test:watch": "node --import tsx --test --watch \"tests/*.test.ts\" \"tests/*.test.tsx\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/ui/tsconfig.json",
     "check": "npm run typecheck && npm test && npm run build",
-    "format": "prettier --write src tests docs .github *.ts *.json *.md",
-    "format:check": "prettier --check src tests docs .github *.ts *.json *.md"
+    "format": "prettier --write src tests docs scripts .github *.ts *.json *.md",
+    "format:check": "prettier --check src tests docs scripts .github *.ts *.json *.md"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

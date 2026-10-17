@@ -1,4 +1,4 @@
-# AgentOps
+# AgentOps Local Viewer
 
 **See every agent you are running, from every provider, in one live field.**
 
@@ -18,8 +18,13 @@ It orchestrates nothing and launches nothing. It receives, and it draws.
                           ● reviewer   ◉ ← verdict flare
 ```
 
-**[▶ Watch a 53-second demo](docs/demo.mp4)** — six agents across four
-providers, spawning, handing off, reaching verdicts and asking for a decision.
+[![Recorded constellation with activity and handoff edges](docs/demo-preview.gif)](docs/demo.mp4)
+
+**[▶ Watch the full 53-second demo](docs/demo.mp4)** — recorded example
+activity with six actors and four provider labels. These labels describe
+reported events; the viewer does not connect to or launch those providers.
+
+This is Figo5's **AgentOps Local Viewer**, an independent local activity viewer.
 
 > **Handing this to a coding agent?** Say:
 > _"Set up AgentOps from https://github.com/Figo5/agentops — read AGENTS.md and
@@ -62,6 +67,20 @@ with no registration step.
 > server answers `415`.
 
 ---
+
+## Try a sample workflow
+
+With the server running, open its page and run this in a second terminal:
+
+```sh
+npm run demo
+```
+
+Watch a planner hand off to an implementer, a reviewer request a change, and
+the actors report a revised result. Every event is labeled **DEMO** and grouped
+in a new `demo-...` session. This sends synthetic events only to your local
+server, stores them in its database, and makes no model calls. It does not
+start coding agents. Use `AGENTOPS_PORT` if you started on a different port.
 
 ## Point your agent at it
 

@@ -293,7 +293,8 @@ export function foldConstellation(
   // ages out of the retention window. Without this, a long-running agent that
   // has not posted recently vanishes from the field entirely.
   const latestStatus = new Map<string, string | null>();
-  for (const event of events) latestStatus.set(event.actor, event.status ?? null);
+  for (const event of events)
+    latestStatus.set(event.actor, event.status ?? null);
 
   for (const event of events) {
     const at = timeOf(event);
